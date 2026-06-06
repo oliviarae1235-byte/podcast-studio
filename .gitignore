@@ -1,0 +1,35 @@
+# ---- secrets / environment (NEVER commit) ----
+.env
+.env.*
+!.env.example
+# iCloud temp & placeholder artifacts (e.g. ".!36469!.env") — may hold copies of secrets
+.!*
+
+# ---- dependencies / builds ----
+node_modules/
+
+# ---- python virtualenv & caches ----
+tts_local/.venv/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# ---- generated episodes (audio + manifest) ----
+output/
+
+# ---- personal cloned-voice data (audio recordings + registries); recreated on use ----
+tts_local/voices/
+voices_replicate/
+
+# ---- any audio files anywhere (belt-and-suspenders) ----
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+*.aac
+
+# ---- local tooling / OS cruft ----
+.claude/
+.DS_Store

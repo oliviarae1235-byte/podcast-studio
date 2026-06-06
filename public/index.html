@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Podcast Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#16130f; --bg2:#1f1a14; --ink:#f4ece0; --muted:#9c9384;
+    --accent:#e9742b; --accent2:#f0c14b; --line:#352d23; --ok:#7bbf6a; --err:#e0664a;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 600px at 80% -10%, #2a2017 0%, transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, #221a13 0%, transparent 55%),
+      var(--bg);
+    color:var(--ink); font-family:"Spline Sans Mono", ui-monospace, monospace;
+    min-height:100vh; line-height:1.5;
+  }
+  .wrap{max-width:860px; margin:0 auto; padding:48px 24px 120px}
+  header h1{
+    font-family:"Fraunces", Georgia, serif; font-weight:900; font-size:clamp(40px,7vw,76px);
+    line-height:.95; margin:0; letter-spacing:-.02em;
+  }
+  header h1 em{font-style:italic; color:var(--accent)}
+  .tag{color:var(--muted); margin:14px 0 0; max-width:46ch; font-size:14px}
+  .step{
+    border:1px solid var(--line); border-radius:14px; background:linear-gradient(180deg,var(--bg2),#1b160f);
+    padding:24px; margin-top:28px; box-shadow:0 20px 40px -30px #000;
+  }
+  .step.dim{opacity:.45; pointer-events:none}
+  .step h2{
+    font-family:"Fraunces",serif; font-weight:600; font-size:13px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--accent2); margin:0 0 4px; display:flex; align-items:center; gap:10px;
+  }
+  .step h2 .n{
+    font-family:"Spline Sans Mono"; background:var(--accent); color:#1a120a; width:24px;height:24px;
+    display:grid;place-items:center;border-radius:7px; font-size:13px; font-weight:600;
+  }
+  .step .sub{color:var(--muted); font-size:13px; margin:0 0 18px}
+  label{display:block; font-size:12px; letter-spacing:.05em; color:var(--muted); margin:0 0 6px; text-transform:uppercase}
+  textarea,input[type=text],input[type=number],select{
+    width:100%; background:#120f0b; border:1px solid var(--line); color:var(--ink);
+    border-radius:9px; padding:12px 14px; font-family:inherit; font-size:14px; resize:vertical;
+  }
+  textarea:focus,input:focus,select:focus{outline:none; border-color:var(--accent)}
+  .row{display:flex; gap:14px; flex-wrap:wrap}
+  .row > div{flex:1; min-width:140px}
+  .tabs{display:flex; gap:8px; margin-bottom:14px}
+  .tabs button{
+    background:transparent; border:1px solid var(--line); color:var(--muted);
+    padding:7px 14px; border-radius:999px; font-family:inherit; font-size:12px; cursor:pointer;
+  }
+  .tabs button.on{background:var(--accent); color:#1a120a; border-color:var(--accent); font-weight:600}
+  button.cta{
+    background:var(--accent); color:#1a120a; border:none; font-family:"Fraunces",serif; font-weight:600;
+    font-size:16px; padding:13px 22px; border-radius:10px; cursor:pointer; margin-top:18px;
+    transition:transform .12s ease, filter .12s ease;
+  }
+  button.cta:hover{filter:brightness(1.08); transform:translateY(-1px)}
+  button.cta:disabled{opacity:.5; cursor:wait; transform:none}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);
+    padding:10px 16px;border-radius:9px;font-family:inherit;cursor:pointer;font-size:13px}
+  .lines{display:flex;flex-direction:column;gap:10px; margin-top:14px; max-height:340px; overflow:auto; padding-right:4px}
+  .line{display:flex; gap:10px; align-items:flex-start}
+  .pill{flex:none;font-size:11px;font-weight:600;padding:4px 9px;border-radius:6px; margin-top:3px}
+  .pill.A{background:#33261a;color:var(--accent2)}
+  .pill.B{background:#1f2a22;color:var(--ok)}
+  .line textarea{font-size:13px; min-height:0; padding:8px 10px}
+  .voices{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; margin-top:10px}
+  .vcard{border:1px solid var(--line); border-radius:10px; padding:12px; cursor:pointer; background:#120f0b}
+  .vcard.sel{border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent)}
+  .vcard .nm{font-size:14px; font-weight:600}
+  .vcard .meta{font-size:11px; color:var(--muted); margin-top:3px; text-transform:capitalize}
+  .vcard audio{width:100%; margin-top:8px; height:30px}
+  .assign{display:flex; gap:14px; margin-top:14px; flex-wrap:wrap}
+  .assign > div{flex:1; min-width:200px}
+  .msg{font-size:13px; margin-top:12px; padding:10px 12px; border-radius:8px; display:none}
+  .msg.show{display:block}
+  .msg.e{background:#2a1612; color:#f0a48f; border:1px solid #5a2a1e}
+  .msg.i{background:#16221a; color:#9fd58f; border:1px solid #2f4a32}
+  .player{margin-top:18px; display:none}
+  .player.show{display:block}
+  .player audio{width:100%}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid #1a120a55;border-top-color:#1a120a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:7px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .hint{font-size:11px;color:var(--muted);margin-top:8px}
+  a{color:var(--accent2)}
+  .foot{color:var(--muted);font-size:12px;margin-top:40px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Podcast<br><em>Studio</em></h1>
+    <p class="tag">Paste anything. Get a two-host conversation, spoken in real voices, stitched into one episode. Runs on your own ElevenLabs + LLM keys.</p>
+  </header>
+
+  <!-- STEP 1: SOURCE + SETTINGS -->
+  <section class="step" id="s1">
+    <h2><span class="n">1</span> Source &amp; settings</h2>
+    <div class="tabs" id="modeTabs" style="margin-bottom:14px">
+      <button class="on" data-m="write">Write it for me</button>
+      <button data-m="verbatim">Use my script as-is</button>
+    </div>
+    <p class="sub" id="s1sub">What should the episode be about?</p>
+    <div class="tabs" id="srcTabs">
+      <button class="on" data-t="text">Text</button>
+      <button data-t="url">Article link</button>
+    </div>
+    <div id="paneText">
+      <textarea id="source" rows="7" placeholder="Paste an article, your notes, a topic brief, a transcript..."></textarea>
+    </div>
+    <div id="paneUrl" style="display:none">
+      <label>Page URL</label>
+      <div class="row">
+        <div style="flex:3"><input type="text" id="url" placeholder="https://example.com/article" /></div>
+        <div style="flex:0 0 auto"><button class="ghost" id="fetchBtn" style="margin-top:0">Fetch text</button></div>
+      </div>
+      <p class="hint">Pulls the readable text into the box below; review it before generating.</p>
+      <textarea id="sourceUrl" rows="5" placeholder="Fetched text will appear here..." style="margin-top:10px"></textarea>
+    </div>
+
+    <div class="row" style="margin-top:18px">
+      <div><label>Host A name</label><input type="text" id="hostA" value="Alex"></div>
+      <div><label>Host B name</label><input type="text" id="hostB" value="Sam"></div>
+      <div><label>Language</label><input type="text" id="language" value="English"></div>
+    </div>
+    <div class="row" style="margin-top:14px" id="styleRow">
+      <div><label>Tone</label>
+        <select id="tone">
+          <option>Educational</option><option>Casual &amp; fun</option><option>Professional</option>
+          <option>Storytelling</option><option>Debate</option><option>Interview</option>
+        </select>
+      </div>
+      <div><label>Length (minutes)</label><input type="number" id="minutes" value="4" min="1" max="20"></div>
+    </div>
+    <button class="cta" id="scriptBtn">Write the script →</button>
+    <div class="msg" id="m1"></div>
+  </section>
+
+  <!-- STEP 2: SCRIPT -->
+  <section class="step dim" id="s2">
+    <h2><span class="n">2</span> Script <span id="epTitle" style="font-family:Fraunces;text-transform:none;letter-spacing:0;color:var(--muted);font-weight:400"></span></h2>
+    <p class="sub">Edit any line before you spend voice credits. A = host A, B = host B.</p>
+    <div class="lines" id="lines"></div>
+    <button class="ghost" id="regenBtn" style="margin-top:14px">↺ Rewrite</button>
+  </section>
+
+  <!-- STEP 3: VOICES -->
+  <section class="step dim" id="s3">
+    <h2><span class="n">3</span> Voices</h2>
+    <p class="sub">Pick a voice for each host. "local" voices run free on your Mac (Chatterbox); ElevenLabs voices appear too if you've set a key. Clone your own below.</p>
+    <div class="assign">
+      <div><label>Host A voice → <b id="aName">Alex</b></label><div id="vSel" style="font-size:12px;color:var(--muted)">Click a card below, then "Assign A".</div></div>
+    </div>
+    <div class="voices" id="voices"></div>
+    <div class="row" style="margin-top:14px">
+      <div style="flex:0 0 auto"><button class="ghost" id="assignA">Assign selected → A</button></div>
+      <div style="flex:0 0 auto"><button class="ghost" id="assignB">Assign selected → B</button></div>
+      <div style="flex:0 0 auto"><button class="ghost" id="reloadVoices">↺ Reload voices</button></div>
+    </div>
+    <div style="margin-top:8px;font-size:13px">A: <b id="curA">—</b> &nbsp;·&nbsp; B: <b id="curB">—</b></div>
+
+    <div style="margin-top:22px;border-top:1px solid var(--line);padding-top:18px">
+      <label>Clone your own voice (consented samples only)</label>
+      <div class="row">
+        <div style="flex:2"><input type="text" id="cloneName" placeholder="Voice name e.g. My Voice"></div>
+        <div style="flex:2"><input type="file" id="cloneFile" accept="audio/*" multiple style="padding:9px"></div>
+        <div style="flex:0 0 auto"><button class="ghost" id="cloneBtn" style="margin-top:0">Clone</button></div>
+      </div>
+      <!-- Provider choice only appears when Replicate is configured (token set). -->
+      <div class="row" id="cloneOpts" style="margin-top:10px;display:none">
+        <div><label>Clone with</label>
+          <select id="cloneProvider">
+            <option value="local">Local Chatterbox (free)</option>
+            <option value="replicate">Replicate (cloud, faster)</option>
+          </select>
+        </div>
+        <div id="cloneLangWrap" style="display:none"><label>Reference language</label>
+          <select id="cloneLang">
+            <option value="en">English (en)</option>
+            <option value="es">Spanish (es)</option>
+            <option value="fr">French (fr)</option>
+            <option value="de">German (de)</option>
+            <option value="it">Italian (it)</option>
+            <option value="pt">Portuguese (pt)</option>
+            <option value="hi">Hindi (hi)</option>
+            <option value="zh">Chinese (zh)</option>
+            <option value="ja">Japanese (ja)</option>
+            <option value="ko">Korean (ko)</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint">One clean sample (~10–30s) of speech works well. Local runs free via Chatterbox; Replicate (if configured) runs the same model on a cloud GPU. Only upload a voice you own or have permission to use.</p>
+    </div>
+    <div class="msg" id="m3"></div>
+  </section>
+
+  <!-- STEP 4: GENERATE -->
+  <section class="step dim" id="s4">
+    <h2><span class="n">4</span> Generate</h2>
+    <p class="sub">Runs in the background and saves an MP3 to the <code>output/</code> folder — long episodes won't time out, and you can close this tab and come back. Add several to the batch to make a set of named episodes, each with its own voices.</p>
+    <div class="row">
+      <div style="flex:2"><label>Episode name</label><input type="text" id="epName" placeholder="My Episode"></div>
+      <div style="flex:0 0 auto;display:flex;align-items:flex-end;gap:10px">
+        <button class="cta" id="genBtn" style="margin-top:0">Generate now ♫</button>
+        <button class="ghost" id="addBatchBtn" style="margin-top:0">+ Add to batch</button>
+      </div>
+    </div>
+    <div class="msg" id="m4"></div>
+
+    <!-- batch queue (independent named episodes, each with its own script + voices) -->
+    <div id="batchWrap" style="display:none;margin-top:18px;border-top:1px solid var(--line);padding-top:16px">
+      <label>Batch queue</label>
+      <div id="batchList" class="lines" style="max-height:240px"></div>
+      <button class="cta" id="genAllBtn" style="margin-top:14px">Generate all ♫</button>
+    </div>
+
+    <!-- live progress for the running job -->
+    <div id="jobBox" style="display:none;margin-top:18px"></div>
+
+    <!-- inline player for a quick single listen -->
+    <div class="player" id="player">
+      <audio id="audio" controls></audio>
+      <a id="dl" class="ghost" style="display:inline-block;margin-top:12px;text-decoration:none" download="podcast.mp3">↓ Download MP3</a>
+    </div>
+
+    <!-- permanent history — every episode ever generated, read straight off disk -->
+    <div style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">
+      <label style="display:flex;align-items:center;gap:10px">History
+        <button class="ghost" id="reloadHistory" style="margin:0;padding:3px 10px;font-size:11px">↺</button>
+      </label>
+      <p class="hint" style="margin-top:0">Everything you've ever generated. Download any episode, or Regenerate one (re-runs its saved script + voices — failed ones too).</p>
+      <div id="history" style="font-size:13px;color:var(--muted)">—</div>
+    </div>
+  </section>
+
+  <p class="foot">Local tool. Your keys, your credits, your files. Only clone voices you own or have consent to use.</p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let script = null;          // {title, lines:[{speaker,text}]}
+let voices = [];            // from /api/voices
+let selectedCard = null;    // voice_id highlighted
+let voiceA = null, voiceB = null;
+
+function show(el){ el.classList.remove('dim'); }
+function msg(el, text, kind){ el.textContent = text; el.className = 'msg show ' + (kind==='e'?'e':'i'); }
+function clearMsg(el){ el.className='msg'; }
+
+// ---- tabs ----
+$('srcTabs').addEventListener('click', e=>{
+  if(e.target.tagName!=='BUTTON') return;
+  [...$('srcTabs').children].forEach(b=>b.classList.toggle('on', b===e.target));
+  const t=e.target.dataset.t;
+  $('paneText').style.display = t==='text'?'block':'none';
+  $('paneUrl').style.display  = t==='url'?'block':'none';
+});
+
+// ---- mode: write-for-me vs verbatim ----
+let mode='write';
+$('modeTabs').addEventListener('click', e=>{
+  if(e.target.tagName!=='BUTTON') return;
+  [...$('modeTabs').children].forEach(b=>b.classList.toggle('on', b===e.target));
+  mode=e.target.dataset.m;
+  const v = mode==='verbatim';
+  $('styleRow').style.display = v?'none':'flex';
+  $('s1sub').textContent = v
+    ? 'Paste your finished script. Use "Name:" at the start of each line. I won\'t change a word — just split it by speaker.'
+    : 'What should the episode be about?';
+  $('source').placeholder = v
+    ? 'Edith: Welcome back to the show.\nSam: Glad to be here. Today we\'re talking about...'
+    : 'Paste an article, your notes, a topic brief, a transcript...';
+  $('scriptBtn').textContent = v ? 'Use my script →' : 'Write the script →';
+});
+
+function currentSource(){
+  const urlMode = $('paneUrl').style.display!=='none';
+  return (urlMode ? $('sourceUrl').value : $('source').value).trim();
+}
+
+$('fetchBtn').onclick = async ()=>{
+  const url=$('url').value.trim(); if(!url) return;
+  $('fetchBtn').disabled=true; $('fetchBtn').textContent='Fetching…';
+  try{
+    const r=await fetch('/api/extract-url',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    $('sourceUrl').value=d.text;
+  }catch(e){ alert('Could not fetch: '+e.message); }
+  $('fetchBtn').disabled=false; $('fetchBtn').textContent='Fetch text';
+};
+
+// ---- step 1 -> script ----
+async function writeScript(){
+  const source=currentSource();
+  if(source.length<20){ msg($('m1'),'Add at least a couple sentences of content.','e'); return; }
+  clearMsg($('m1'));
+  const verbatim = mode==='verbatim';
+  const busyLabel = verbatim ? 'Parsing…' : 'Writing…';
+  const doneLabel = verbatim ? 'Use my script →' : 'Write the script →';
+  $('scriptBtn').disabled=true; $('scriptBtn').innerHTML='<span class="spin"></span>'+busyLabel;
+  try{
+    const body={ source, hostA:$('hostA').value, hostB:$('hostB').value, tone:$('tone').value, minutes:$('minutes').value, language:$('language').value, verbatim };
+    const r=await fetch('/api/script',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    script=d; renderScript();
+    show($('s2')); show($('s3')); show($('s4'));
+    if(voices.length===0) loadVoices();
+  }catch(e){ msg($('m1'),(verbatim?'Parse':'Script')+' failed: '+e.message,'e'); }
+  $('scriptBtn').disabled=false; $('scriptBtn').textContent=doneLabel;
+}
+$('scriptBtn').onclick=writeScript;
+$('regenBtn').onclick=writeScript;
+
+function renderScript(){
+  $('epTitle').textContent = script.title ? '— '+script.title : '';
+  if(!$('epName').value.trim()) $('epName').value = script.title || '';
+  $('aName').textContent=$('hostA').value;
+  const box=$('lines'); box.innerHTML='';
+  script.lines.forEach((ln,i)=>{
+    const row=document.createElement('div'); row.className='line';
+    const p=document.createElement('span'); p.className='pill '+ln.speaker; p.textContent=ln.speaker;
+    const ta=document.createElement('textarea'); ta.rows=1; ta.value=ln.text;
+    ta.oninput=()=>{ script.lines[i].text=ta.value; ta.style.height='auto'; ta.style.height=ta.scrollHeight+'px'; };
+    p.onclick=()=>{ ln.speaker = ln.speaker==='A'?'B':'A'; p.className='pill '+ln.speaker; p.textContent=ln.speaker; };
+    row.append(p,ta); box.append(row);
+    requestAnimationFrame(()=>{ ta.style.height=ta.scrollHeight+'px'; });
+  });
+}
+
+// ---- voices ----
+async function loadVoices(){
+  try{
+    const r=await fetch('/api/voices'); const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    voices=d.voices; renderVoices();
+    // Only offer the Replicate clone option when Replicate is actually configured.
+    const hasRep = voices.some(v=>v.voice_id.startsWith('replicate:'));
+    $('cloneOpts').style.display = hasRep ? 'flex' : 'none';
+  }catch(e){ msg($('m3'),'Could not load voices: '+e.message,'e'); }
+}
+function renderVoices(){
+  const box=$('voices'); box.innerHTML='';
+  voices.forEach(v=>{
+    const c=document.createElement('div'); c.className='vcard'; c.dataset.id=v.voice_id;
+    c.innerHTML=`<div class="nm">${v.name}</div><div class="meta">${v.category||''} ${v.labels?.gender?'· '+v.labels.gender:''} ${v.labels?.accent?'· '+v.labels.accent:''}</div>`;
+    if(v.preview_url){ const a=document.createElement('audio'); a.controls=true; a.src=v.preview_url; c.append(a); }
+    c.onclick=(e)=>{ if(e.target.tagName==='AUDIO')return; selectedCard=v.voice_id;
+      [...box.children].forEach(x=>x.classList.toggle('sel', x.dataset.id===v.voice_id)); };
+    box.append(c);
+  });
+}
+$('reloadVoices').onclick=loadVoices;
+function nameOf(id){ const v=voices.find(x=>x.voice_id===id); return v?v.name:id; }
+$('assignA').onclick=()=>{ if(!selectedCard)return; voiceA=selectedCard; $('curA').textContent=nameOf(voiceA); };
+$('assignB').onclick=()=>{ if(!selectedCard)return; voiceB=selectedCard; $('curB').textContent=nameOf(voiceB); };
+
+// Reference language only matters for Replicate (the multilingual model) — show it for that provider.
+$('cloneProvider').onchange=()=>{ $('cloneLangWrap').style.display = $('cloneProvider').value==='replicate' ? '' : 'none'; };
+
+$('cloneBtn').onclick=async()=>{
+  const files=$('cloneFile').files; if(!files.length){ msg($('m3'),'Choose at least one audio sample.','e'); return; }
+  const fd=new FormData(); fd.append('name',$('cloneName').value||'My Cloned Voice');
+  [...files].forEach(f=>fd.append('samples',f));
+  const prov=$('cloneProvider').value||'local';
+  fd.append('provider',prov);
+  if(prov==='replicate') fd.append('language',$('cloneLang').value||'en');
+  $('cloneBtn').disabled=true; $('cloneBtn').textContent='Cloning…';
+  try{
+    const r=await fetch('/api/clone',{method:'POST',body:fd}); const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    msg($('m3'),'Cloned "'+d.name+'". Reloading voices — assign it to a host.','i');
+    await loadVoices();
+  }catch(e){ msg($('m3'),'Clone failed: '+e.message,'e'); }
+  $('cloneBtn').disabled=false; $('cloneBtn').textContent='Clone';
+};
+
+// ---- generate (background jobs) ----
+// Queue as many episodes as you like — each with its own script + voices — and keep
+// adding more even while others synthesize. Every submitted batch is appended to one
+// server-side queue that drains one episode at a time and auto-continues to the next,
+// so you can set them all up and walk away overnight.
+let batch = [];          // episodes staged in the UI, not yet submitted
+let activeJobs = [];     // submitted job ids, in order (a running session log)
+let polling = false;
+let pollWanted = false;  // set when a new job is submitted mid-poll, so the loop re-runs
+let lastDone = -1;
+
+// Snapshot the current script + voices + name into a self-contained episode.
+function captureCurrent(){
+  if(!script){ msg($('m4'),'Write a script first (step 1).','e'); return null; }
+  if(!voiceA||!voiceB){ msg($('m4'),'Assign a voice to both Host A and Host B (step 3).','e'); return null; }
+  const name=($('epName').value||script.title||'Episode').trim();
+  return { name, lines: JSON.parse(JSON.stringify(script.lines)), voiceA, voiceB };
+}
+
+function renderBatch(){
+  $('batchWrap').style.display = batch.length ? 'block' : 'none';
+  $('genAllBtn').textContent = 'Generate all ('+batch.length+') ♫';
+  const box=$('batchList'); box.innerHTML='';
+  batch.forEach((b,i)=>{
+    const row=document.createElement('div'); row.className='line'; row.style.alignItems='center';
+    const info=document.createElement('div'); info.style.flex='1'; info.style.fontSize='13px';
+    info.innerHTML=`<b>${b.name||'(unnamed)'}</b> <span style="color:var(--muted)">· ${b.lines.length} lines · A:${nameOf(b.voiceA)} · B:${nameOf(b.voiceB)}</span>`;
+    const del=document.createElement('button'); del.className='ghost'; del.textContent='✕'; del.style.margin='0'; del.style.padding='4px 10px';
+    del.onclick=()=>{ batch.splice(i,1); renderBatch(); };
+    row.append(info,del); box.append(row);
+  });
+}
+
+// Staging works at any time — even while a job is running.
+$('addBatchBtn').onclick=()=>{
+  const ep=captureCurrent(); if(!ep) return;
+  batch.push(ep); renderBatch();
+  msg($('m4'),'Staged "'+ep.name+'" ('+batch.length+' waiting). Change the source/voices and add more, then Generate all.','i');
+};
+
+$('genBtn').onclick=()=>{ const ep=captureCurrent(); if(ep) submitJob([ep]); };
+$('genAllBtn').onclick=()=>{
+  if(!batch.length) return;
+  const audios=batch.slice(); batch=[]; renderBatch();
+  submitJob(audios);
+};
+
+// Submit a batch to the server queue. Never blocks — if something is already running,
+// these line up behind it and run automatically when it's their turn.
+async function submitJob(audios){
+  clearMsg($('m4')); $('player').classList.remove('show');
+  try{
+    const r=await fetch('/api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({audios})});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    activeJobs.push(d.jobId);
+    pollWanted=true;
+    msg($('m4'),'Queued '+audios.length+(audios.length>1?' episodes':' episode')+'. They generate one after another — keep adding more or leave it overnight; finished files land in output/.','i');
+    startPolling();
+  }catch(e){ msg($('m4'),'Could not queue: '+e.message,'e'); }
+}
+
+// Fetch every submitted job once, render them as one combined list, and refresh
+// "Saved episodes" whenever one more has finished. Returns the flattened audios.
+async function pollOnce(){
+  const all=[]; let allDone=true;
+  for(const jid of activeJobs){
+    try{ const r=await fetch('/api/jobs/'+jid); const d=await r.json();
+      if(r.ok){ all.push(...d.audios); if(!d.done) allDone=false; } else allDone=false;
+    }catch(e){ allDone=false; }
+  }
+  renderJob(all);
+  const doneCount=all.filter(a=>a.status==='done').length;
+  if(doneCount!==lastDone){ lastDone=doneCount; loadHistory(); }
+  return { all, allDone };
+}
+
+// One poll loop covers the whole session. The outer do/while re-runs if a job was
+// submitted during the final tick, so nothing slips through the gap before we stop.
+async function startPolling(){
+  if(polling) return;
+  polling=true; $('jobBox').style.display='block';
+  let res;
+  do{
+    pollWanted=false;
+    do{
+      res=await pollOnce();
+      if(!res.allDone) await new Promise(r=>setTimeout(r,1500));
+    } while(!res.allDone);
+  } while(pollWanted);
+  polling=false;
+  const ok=res.all.filter(a=>a.status==='done'), bad=res.all.filter(a=>a.status==='error');
+  msg($('m4'),'All done — '+ok.length+' generated'+(bad.length?', '+bad.length+' failed':'')+'. Saved in output/.', bad.length?'e':'i');
+  if(res.all.length===1 && ok.length===1){ const f='/output/'+encodeURIComponent(ok[0].file);
+    $('audio').src=f; $('dl').href=f; $('dl').setAttribute('download', ok[0].file); $('player').classList.add('show'); }
+}
+
+// A small "↺ Regenerate" button that re-runs an episode by its history id.
+function regenButton(id, label){
+  const b=document.createElement('button'); b.className='ghost'; b.textContent=label||'↺ Regenerate';
+  b.style.cssText='margin:0;padding:4px 10px;font-size:11px';
+  b.onclick=()=>regenerate(id, b);
+  return b;
+}
+
+function renderJob(audios){
+  const box=$('jobBox'); box.innerHTML='<label>Progress</label>';
+  audios.forEach(a=>{
+    const row=document.createElement('div'); row.className='line'; row.style.alignItems='center'; row.style.margin='6px 0';
+    const right=document.createElement('div'); right.style.cssText='font-size:13px;display:flex;align-items:center;gap:8px';
+    if(a.status==='queued') right.innerHTML='<span style="color:var(--muted)">queued…</span>';
+    else if(a.status==='running') right.innerHTML=`<span class="spin" style="border-color:#9c938455;border-top-color:var(--accent)"></span><span style="color:var(--accent2)">line ${a.line}/${a.total||'?'}</span>`;
+    else if(a.status==='done') right.innerHTML=`<a href="/output/${encodeURIComponent(a.file)}" download="${a.file}">↓ ${a.file}</a>`;
+    else if(a.status==='error'){ right.innerHTML=`<span style="color:var(--err)">failed: ${a.error||'error'}</span>`; if(a.id) right.append(regenButton(a.id)); }
+    const left=document.createElement('div'); left.style.cssText='flex:1;font-size:13px'; left.innerHTML=`<b>${a.name}</b>`;
+    row.append(left,right); box.append(row);
+  });
+}
+
+// Re-run a past or failed episode from its saved script + voices.
+async function regenerate(id, btn){
+  if(!id) return;
+  const t=btn?btn.textContent:''; if(btn){ btn.disabled=true; btn.textContent='Queuing…'; }
+  try{
+    const r=await fetch('/api/regenerate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    activeJobs.push(d.jobId); pollWanted=true;
+    msg($('m4'),'Re-queued — it\'ll run after anything already in progress. Watch Progress above.','i');
+    startPolling();
+  }catch(e){ msg($('m4'),'Regenerate failed: '+e.message,'e'); }
+  if(btn){ btn.disabled=false; btn.textContent=t; }
+}
+
+function fmtDate(ms){ if(!ms) return ''; try{ return new Date(ms).toLocaleString(); }catch{ return ''; } }
+
+// Permanent history, read from disk — nothing here disappears between runs/reloads.
+async function loadHistory(){
+  try{
+    const r=await fetch('/api/history'); const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    const box=$('history'); box.innerHTML='';
+    if(!d.history.length){ box.textContent='Nothing yet — generate an episode above.'; return; }
+    d.history.forEach(h=>{
+      const row=document.createElement('div'); row.style.cssText='display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)';
+      const left=document.createElement('div'); left.style.flex='1';
+      let badge='';
+      if(h.status==='error') badge=` <span style="color:var(--err)">· failed</span>`;
+      else if(h.status==='running'||h.status==='queued') badge=` <span style="color:var(--accent2)">· ${h.status}…</span>`;
+      else if(!h.present) badge=` <span style="color:var(--muted)">· file removed</span>`;
+      const sz = h.size!=null ? ' · '+(h.size/1048576).toFixed(1)+' MB' : '';
+      left.innerHTML=`<b>${h.name}</b>${badge}<br><span style="color:var(--muted);font-size:11px">${fmtDate(h.createdAt)}${sz}</span>`;
+      const right=document.createElement('div'); right.style.cssText='display:flex;align-items:center;gap:8px';
+      if(h.present && h.file){ const a=document.createElement('a'); a.href='/output/'+encodeURIComponent(h.file); a.setAttribute('download',h.file); a.textContent='↓ Download'; right.append(a); }
+      if(h.regenerable && h.id) right.append(regenButton(h.id));
+      row.append(left,right); box.append(row);
+    });
+  }catch(e){ $('history').textContent='Could not load history: '+e.message; }
+}
+$('reloadHistory').onclick=loadHistory;
+loadHistory();
+</script>
+</body>
+</html>

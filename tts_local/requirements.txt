@@ -1,0 +1,13 @@
+# Local TTS service (Apple Silicon friendly)
+# Install into a Python 3.11 virtualenv — see README.
+chatterbox-tts
+# chatterbox's "perth" watermarker imports pkg_resources, which setuptools 81+
+# removed. Pin below 81 so pkg_resources stays available, else model load fails
+# with: TypeError: 'NoneType' object is not callable (perth.PerthImplicitWatermarker)
+setuptools<81
+fastapi
+uvicorn
+python-multipart
+soundfile
+# torch / torchaudio are pulled in by chatterbox-tts; if not, install:
+#   pip install torch torchaudio
