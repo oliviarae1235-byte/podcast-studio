@@ -385,7 +385,7 @@ $('modeTabs').addEventListener('click', e=>{
   const v = mode==='verbatim';
   $('styleRow').style.display = v?'none':'flex';
   $('s1sub').textContent = v
-    ? 'Paste your finished script. Use "Name:" at the start of each line. I won\'t change a word — just split it by speaker.'
+    ? 'Paste your finished script. Use "Name:" at the start of each line — the host names are read from the script automatically. I won\'t change a word.'
     : 'What should the episode be about?';
   $('source').placeholder = v
     ? 'Edith: Welcome back to the show.\nSam: Glad to be here. Today we\'re talking about...'
@@ -422,6 +422,9 @@ async function writeScript(){
     const body={ source, hostA:$('hostA').value, hostB:$('hostB').value, tone:$('tone').value, minutes:$('minutes').value, language:$('language').value, verbatim };
     const r=await fetch('/api/script',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    // Verbatim mode: the server reads the host names off the script itself.
+    if(d.hostA) $('hostA').value=d.hostA;
+    if(d.hostB) $('hostB').value=d.hostB;
     script=d; renderScript();
     show($('s2')); show($('s3')); show($('s4'));
   }catch(e){ msg($('m1'),(verbatim?'Parse':'Script')+' failed: '+e.message,'e'); }

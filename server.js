@@ -802,17 +802,51 @@ function parseVerbatim(source, hostA, hostB) {
   return lines;
 }
 
+// Detect the speaker names from a "Name: line" script: the two labels used most
+// often. Host A is whichever of the two speaks first. So users can paste any
+// script and never have to type the host names to match it.
+function detectHosts(source) {
+  const counts = new Map(); // lowercased label -> {name, count, first}
+  const labelRe = /^\s*([^:\n]{1,30}?)\s*:\s*\S/;
+  let order = 0;
+  for (const raw of String(source || '').split(/\r?\n/)) {
+    const m = raw.match(labelRe);
+    if (!m) continue;
+    const name = m[1].trim();
+    // skip obvious non-speaker labels (urls, timestamps, numbering)
+    if (!name || /^https?$/i.test(name) || /^[\d\s.:-]+$/.test(name)) continue;
+    const key = name.toLowerCase();
+    const e = counts.get(key) || { name, count: 0, first: order++ };
+    e.count++;
+    counts.set(key, e);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.first - b.first)
+    .slice(0, 2)
+    .sort((a, b) => a.first - b.first)
+    .map((e) => e.name);
+}
+
 app.post('/api/script', async (req, res) => {
   try {
     const { source, hostA = 'Alex', hostB = 'Sam', tone = 'Educational', minutes = 4, language = 'English', verbatim = false } = req.body || {};
     if (!source || source.trim().length < 20) return res.status(400).json({ error: 'Give me at least a couple sentences of source content.' });
 
     if (verbatim) {
-      const linesV = parseVerbatim(source, hostA, hostB);
-      if (!linesV.length) {
-        return res.status(400).json({ error: `No lines matched "${hostA}:" or "${hostB}:". Check the host names match the labels in your script exactly.` });
+      // Try the typed names, and the names detected from the script itself;
+      // keep whichever actually matches more of the script.
+      let A = hostA, B = hostB;
+      let linesV = parseVerbatim(source, A, B);
+      const det = detectHosts(source);
+      if (det.length) {
+        const dA = det[0], dB = det[1] || hostB;
+        const dLines = parseVerbatim(source, dA, dB);
+        if (dLines.length > linesV.length) { A = dA; B = dB; linesV = dLines; }
       }
-      return res.json({ title: 'My Script', lines: linesV });
+      if (!linesV.length) {
+        return res.status(400).json({ error: 'No speaker lines found. Start each line with the speaker\'s name and a colon, e.g. "Maya: Welcome back."' });
+      }
+      return res.json({ title: 'My Script', lines: linesV, hostA: A, hostB: B });
     }
 
     res.json(await generateScript({ source, hostA, hostB, tone, minutes, language }));
