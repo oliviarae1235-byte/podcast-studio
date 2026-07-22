@@ -41,6 +41,15 @@ const app = express();
 app.set('trust proxy', 1); // behind cloudflared: real client IP + https detection
 app.use(express.json({ limit: '2mb' }));
 
+// One canonical public URL: alias hosts (bare domain, www) redirect to it so
+// sessions and Google Sign-In always live on a single origin. Local access
+// (localhost) is never redirected. Unset CANONICAL_HOST -> no redirects.
+const CANONICAL_HOST = process.env.CANONICAL_HOST || '';
+app.use((req, res, next) => {
+  if (!CANONICAL_HOST || req.hostname === CANONICAL_HOST || req.hostname === 'localhost' || req.hostname === '127.0.0.1') return next();
+  res.redirect(301, `https://${CANONICAL_HOST}${req.originalUrl}`);
+});
+
 // ---------- accounts & access control ----------
 // Hosted mode: when APP_PASSWORD and/or GOOGLE_CLIENT_ID is set in .env the app
 // shows a sign-in / create-account page, and every episode, output file, and
