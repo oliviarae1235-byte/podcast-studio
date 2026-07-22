@@ -33,13 +33,18 @@ Node app natively.
 
 ---
 
-## Optional: protect it with a login
+## Optional: host it with accounts
 
 Running it only on your own laptop? Skip this — there's no login step by default.
 
 If you host it on the internet, set `APP_PASSWORD` (and optionally Google Sign-In via
-`GOOGLE_CLIENT_ID` + `ALLOWED_EMAILS`) in `.env` — see the comments there. A login page
-then guards all your episodes, history, and cloned voices.
+`GOOGLE_CLIENT_ID`) in `.env` — see the comments there. The app then shows a
+sign-in / create-account page, and **every account gets its own private episodes,
+history, and cloned voices**. Set `ADMIN_EMAILS` to your own email to claim
+everything created before accounts existed, and `ALLOWED_EMAILS` if you want to
+restrict who can sign up (blank = open sign-up). Note: all generation still runs
+on the machine hosting it — one shared queue, so this suits a small group, not a
+crowd.
 
 ---
 

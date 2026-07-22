@@ -16,7 +16,7 @@ import { mkdir, writeFile, readFile, rm, readdir, stat } from 'node:fs/promises'
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
+import { randomUUID, createHmac, timingSafeEqual, scryptSync, randomBytes } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -41,32 +41,81 @@ const app = express();
 app.set('trust proxy', 1); // behind cloudflared: real client IP + https detection
 app.use(express.json({ limit: '2mb' }));
 
-// ---------- access control ----------
-// Enforced only when APP_PASSWORD and/or GOOGLE_CLIENT_ID is set in .env, so a
-// fresh local install has no login step. On a public instance set both: password
-// as fallback, Google Sign-In (restricted to ALLOWED_EMAILS) as the main path.
+// ---------- accounts & access control ----------
+// Hosted mode: when APP_PASSWORD and/or GOOGLE_CLIENT_ID is set in .env the app
+// shows a sign-in / create-account page, and every episode, output file, and
+// cloned voice belongs to the account that made it. A fresh laptop install
+// leaves these unset -> no login step, nothing scoped, exactly like before.
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+// Optional sign-up allowlist; empty = anyone may create an account.
 const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+// Admin accounts also see pre-account ("legacy") episodes, files, and voices.
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const AUTH_ON = !!(APP_PASSWORD || GOOGLE_CLIENT_ID);
 // Without a fixed SESSION_SECRET every restart logs everyone out.
 const SESSION_SECRET = process.env.SESSION_SECRET || randomUUID();
 const SESSION_DAYS = 30;
 const AUTH_COOKIE = 'ps_auth';
 
-const signSession = (exp) => `${exp}.${createHmac('sha256', SESSION_SECRET).update(String(exp)).digest('hex')}`;
-function hasValidSession(req) {
-  const raw = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(AUTH_COOKIE + '='));
-  if (!raw) return false;
-  const [exp, sig] = raw.slice(AUTH_COOKIE.length + 1).split('.');
-  if (!exp || !sig || !/^\d+$/.test(exp) || Number(exp) < Date.now()) return false;
-  const expect = createHmac('sha256', SESSION_SECRET).update(String(exp)).digest('hex');
-  return sig.length === expect.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expect));
+// -- user + voice-ownership stores (data/*.json) --
+const DATA_DIR = path.join(__dirname, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const VOICE_OWNERS_FILE = path.join(DATA_DIR, 'voice_owners.json');
+let users = null;        // [{id, email, name, passwordHash?, createdAt}]
+let voiceOwners = null;  // { "local:v_abc123": userId, ... }
+async function loadUsers() {
+  if (!users) { try { users = JSON.parse(await readFile(USERS_FILE, 'utf8')); } catch { users = []; } }
+  return users;
 }
-function setSession(req, res) {
+async function saveUsers() { await mkdir(DATA_DIR, { recursive: true }); await writeFile(USERS_FILE, JSON.stringify(users, null, 2)); }
+async function loadVoiceOwners() {
+  if (!voiceOwners) { try { voiceOwners = JSON.parse(await readFile(VOICE_OWNERS_FILE, 'utf8')); } catch { voiceOwners = {}; } }
+  return voiceOwners;
+}
+async function saveVoiceOwners() { await mkdir(DATA_DIR, { recursive: true }); await writeFile(VOICE_OWNERS_FILE, JSON.stringify(voiceOwners, null, 2)); }
+
+const normEmail = (e) => String(e || '').trim().toLowerCase();
+const isAdmin = (u) => !!u && ADMIN_EMAILS.includes(u.email);
+const emailAllowed = (e) => !ALLOWED_EMAILS.length || ALLOWED_EMAILS.includes(normEmail(e)) || ADMIN_EMAILS.includes(normEmail(e));
+async function ensureUser(email, name) {
+  await loadUsers();
+  const em = normEmail(email);
+  let u = users.find((x) => x.email === em);
+  if (!u) {
+    u = { id: randomUUID().slice(0, 8), email: em, name: String(name || em.split('@')[0]).slice(0, 60), createdAt: Date.now() };
+    users.push(u);
+    await saveUsers();
+  }
+  return u;
+}
+const hashPassword = (pw, salt = randomBytes(16).toString('hex')) => `${salt}:${scryptSync(pw, salt, 32).toString('hex')}`;
+function checkPassword(pw, stored) {
+  const [salt, hex] = String(stored || '').split(':');
+  if (!salt || !hex) return false;
+  const want = Buffer.from(hex, 'hex');
+  const got = scryptSync(pw, salt, 32);
+  return want.length === got.length && timingSafeEqual(want, got);
+}
+
+// Ownership rule for episodes/outputs/voices: with auth off nothing is scoped;
+// items created before accounts existed (owner == null) belong to the admins.
+const canSee = (user, owner) => !AUTH_ON || (owner ? owner === user?.id : isAdmin(user));
+
+// -- sessions: "uid.exp.hmac" in an HttpOnly cookie --
+const signSession = (uid, exp) => createHmac('sha256', SESSION_SECRET).update(`${uid}.${exp}`).digest('hex');
+function sessionUid(req) {
+  const raw = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(AUTH_COOKIE + '='));
+  if (!raw) return null;
+  const [uid, exp, sig] = raw.slice(AUTH_COOKIE.length + 1).split('.');
+  if (!uid || !exp || !sig || !/^\d+$/.test(exp) || Number(exp) < Date.now()) return null;
+  const expect = signSession(uid, exp);
+  return sig.length === expect.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expect)) ? uid : null;
+}
+function setSession(req, res, uid) {
   const exp = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
   const secure = req.secure ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `${AUTH_COOKIE}=${signSession(exp)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 3600}${secure}`);
+  res.setHeader('Set-Cookie', `${AUTH_COOKIE}=${uid}.${exp}.${signSession(uid, exp)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 3600}${secure}`);
 }
 
 // brute-force brake: 8 bad passwords from one IP -> locked out for 10 minutes
@@ -74,38 +123,81 @@ const failedLogins = new Map();
 const throttled = (ip) => { const f = failedLogins.get(ip); return f && f.count >= 8 && Date.now() - f.at < 10 * 60 * 1000; };
 const recordFail = (ip) => { const f = failedLogins.get(ip) || { count: 0, at: 0 }; f.count++; f.at = Date.now(); failedLogins.set(ip, f); };
 
-const AUTH_OPEN = new Set(['/login', '/login.html', '/api/login', '/api/auth/google', '/api/auth/config', '/logout', '/favicon.ico']);
-app.use((req, res, next) => {
-  if (!AUTH_ON || AUTH_OPEN.has(req.path) || hasValidSession(req)) return next();
+const AUTH_OPEN = new Set(['/login', '/login.html', '/api/login', '/api/signup', '/api/auth/google', '/api/auth/config', '/api/me', '/logout', '/favicon.ico']);
+app.use(async (req, res, next) => {
+  req.user = null;
+  if (!AUTH_ON) return next();
+  const uid = sessionUid(req);
+  if (uid) { await loadUsers(); req.user = users.find((u) => u.id === uid) || null; }
+  if (req.user || AUTH_OPEN.has(req.path)) return next();
   if (req.path.startsWith('/api/') || req.path.startsWith('/output/')) return res.status(401).json({ error: 'Not signed in.' });
   res.redirect('/login');
 });
 
 app.get('/login', (req, res) => {
-  if (!AUTH_ON || hasValidSession(req)) return res.redirect('/');
+  if (!AUTH_ON || req.user) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.get('/api/auth/config', (req, res) => res.json({ googleClientId: GOOGLE_CLIENT_ID || null, passwordEnabled: !!APP_PASSWORD }));
+app.get('/api/auth/config', (req, res) => res.json({ authOn: AUTH_ON, googleClientId: GOOGLE_CLIENT_ID || null, openSignup: !ALLOWED_EMAILS.length }));
+app.get('/api/me', (req, res) => res.json({ user: req.user ? { email: req.user.email, name: req.user.name, admin: isAdmin(req.user) } : null }));
 
-app.post('/api/login', (req, res) => {
-  const ip = req.ip || 'unknown';
-  if (!APP_PASSWORD) return res.status(400).json({ error: 'Password login is not enabled.' });
-  if (throttled(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 10 minutes.' });
-  const given = Buffer.from(String(req.body?.password || ''));
-  const want = Buffer.from(APP_PASSWORD);
-  if (given.length !== want.length || !timingSafeEqual(given, want)) {
+app.post('/api/signup', async (req, res) => {
+  try {
+    if (!AUTH_ON) return res.status(400).json({ error: 'Accounts are disabled on local installs.' });
+    const ip = req.ip || 'unknown';
+    if (throttled(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 10 minutes.' });
+    const name = String(req.body?.name || '').trim().slice(0, 60);
+    const email = normEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    if (!emailAllowed(email)) return res.status(403).json({ error: 'Sign-ups are restricted on this server.' });
+    await loadUsers();
+    if (users.some((u) => u.email === email)) { recordFail(ip); return res.status(409).json({ error: 'That email already has an account — sign in instead.' }); }
+    const u = { id: randomUUID().slice(0, 8), email, name: name || email.split('@')[0], passwordHash: hashPassword(password), createdAt: Date.now() };
+    users.push(u);
+    await saveUsers();
+    setSession(req, res, u.id);
+    res.json({ ok: true, email });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const ip = req.ip || 'unknown';
+    if (throttled(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 10 minutes.' });
+    const email = normEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
+    await loadUsers();
+    const u = users.find((x) => x.email === email);
+    if (u?.passwordHash && checkPassword(password, u.passwordHash)) {
+      failedLogins.delete(ip);
+      setSession(req, res, u.id);
+      return res.json({ ok: true, email });
+    }
+    // The owner's master password from .env works for admin emails even if that
+    // account never set its own password (e.g. it was created via Google).
+    if (APP_PASSWORD && ADMIN_EMAILS.includes(email)) {
+      const given = Buffer.from(password);
+      const want = Buffer.from(APP_PASSWORD);
+      if (given.length === want.length && timingSafeEqual(given, want)) {
+        const admin = await ensureUser(email);
+        failedLogins.delete(ip);
+        setSession(req, res, admin.id);
+        return res.json({ ok: true, email });
+      }
+    }
     recordFail(ip);
-    return res.status(401).json({ error: 'Wrong password.' });
-  }
-  failedLogins.delete(ip);
-  setSession(req, res);
-  res.json({ ok: true });
+    res.status(401).json({ error: 'Wrong email or password.' });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 
 // Google Sign-In: the login page posts the ID token (credential) from Google's
 // button; Google's tokeninfo endpoint checks the signature, we check that the
-// token was issued for OUR client id and that the email is on the allowlist.
+// token was issued for OUR client id, then sign the account in (creating it on
+// first use).
 app.post('/api/auth/google', async (req, res) => {
   try {
     if (!GOOGLE_CLIENT_ID) return res.status(400).json({ error: 'Google sign-in is not configured.' });
@@ -116,10 +208,10 @@ app.post('/api/auth/google', async (req, res) => {
     if (!r.ok || info.aud !== GOOGLE_CLIENT_ID || info.email_verified !== 'true') {
       return res.status(401).json({ error: 'Google sign-in could not be verified.' });
     }
-    const email = String(info.email || '').toLowerCase();
-    if (!ALLOWED_EMAILS.includes(email)) return res.status(403).json({ error: `${email} is not on the allowed list.` });
-    setSession(req, res);
-    res.json({ ok: true, email });
+    if (!emailAllowed(info.email)) return res.status(403).json({ error: 'Sign-ups are restricted on this server.' });
+    const u = await ensureUser(info.email, info.name);
+    setSession(req, res, u.id);
+    res.json({ ok: true, email: u.email });
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 
@@ -216,15 +308,21 @@ async function localVoices() {
   try {
     const regPath = path.join(__dirname, 'tts_local', 'voices', 'registry.json');
     const reg = JSON.parse(await readFile(regPath, 'utf8'));
-    const voices = [
+    return [
       { voice_id: 'local:default', name: 'Chatterbox Default', category: 'local · built-in', labels: {}, preview_url: null },
       ...Object.entries(reg).map(([id, meta]) => ({
         voice_id: `local:${id}`, name: meta.name || id, category: 'local · clone', labels: {}, preview_url: null,
       })),
     ];
-    const clones = voices.filter(v => v.voice_id !== 'local:default');
-    return clones.length ? clones : voices;
   } catch { return []; }
+}
+
+// A voice is visible to a user if they cloned it; pre-account clones belong to
+// the admins; the built-in default is visible to everyone. No-auth mode: all.
+async function voiceVisible(user, voiceId) {
+  if (!AUTH_ON || String(voiceId).endsWith(':default')) return true;
+  await loadVoiceOwners();
+  return canSee(user, voiceOwners[voiceId] || null);
 }
 
 // ---- Replicate (same Chatterbox model, cloud GPU) ----
@@ -561,12 +659,15 @@ async function buildEpisode(lines, voiceA, voiceB, outPath, onProgress, cancelSi
 // user has no clones yet, in which case it's kept so the list is never empty.
 app.get('/api/voices', async (req, res) => {
   const local = await localVoices();
-  const clones = local.filter((v) => v.voice_id !== 'local:default');
-  res.json({ voices: clones.length ? clones : local });
+  const visible = [];
+  for (const v of local) if (await voiceVisible(req.user, v.voice_id)) visible.push(v);
+  const clones = visible.filter((v) => v.voice_id !== 'local:default');
+  res.json({ voices: clones.length ? clones : visible });
 });
 
 app.get('/api/voices/:id/audio', async (req, res) => {
   try {
+    if (!(await voiceVisible(req.user, `local:${req.params.id}`))) return res.status(404).json({ error: 'Voice not found' });
     const regPath = path.join(__dirname, 'tts_local', 'voices', 'registry.json');
     const reg = JSON.parse(await readFile(regPath, 'utf8'));
     const meta = reg[req.params.id];
@@ -578,6 +679,7 @@ app.get('/api/voices/:id/audio', async (req, res) => {
 
 app.patch('/api/voices/:id', async (req, res) => {
   try {
+    if (!(await voiceVisible(req.user, `local:${req.params.id}`))) return res.status(404).json({ error: 'Voice not found' });
     const { name } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
     const regPath = path.join(__dirname, 'tts_local', 'voices', 'registry.json');
@@ -591,6 +693,7 @@ app.patch('/api/voices/:id', async (req, res) => {
 
 app.delete('/api/voices/:id', async (req, res) => {
   try {
+    if (!(await voiceVisible(req.user, `local:${req.params.id}`))) return res.status(404).json({ error: 'Voice not found' });
     const regPath = path.join(__dirname, 'tts_local', 'voices', 'registry.json');
     const reg = JSON.parse(await readFile(regPath, 'utf8'));
     const meta = reg[req.params.id];
@@ -599,6 +702,9 @@ app.delete('/api/voices/:id', async (req, res) => {
     await rm(filePath, { force: true });
     delete reg[req.params.id];
     await writeFile(regPath, JSON.stringify(reg, null, 2));
+    await loadVoiceOwners();
+    delete voiceOwners[`local:${req.params.id}`];
+    await saveVoiceOwners();
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -624,6 +730,11 @@ app.post('/api/clone', upload.array('samples', 5), async (req, res) => {
         language: (req.body.language || 'en'),
       };
       await saveReplicateReg(reg);
+      if (AUTH_ON && req.user) {
+        await loadVoiceOwners();
+        voiceOwners[`replicate:${id}`] = req.user.id;
+        await saveVoiceOwners();
+      }
       return res.json({ voice_id: `replicate:${id}`, name: reg[id].name });
     } catch (e) {
       return res.status(500).json({ error: 'Could not store Replicate voice: ' + e.message });
@@ -639,6 +750,11 @@ app.post('/api/clone', upload.array('samples', 5), async (req, res) => {
     const r = await fetch(`${LOCAL_TTS_URL}/clone`, { method: 'POST', body: form });
     const d = await r.json();
     if (!r.ok) return res.status(r.status).json({ error: d.detail || JSON.stringify(d) });
+    if (AUTH_ON && req.user) {
+      await loadVoiceOwners();
+      voiceOwners[`local:${d.id}`] = req.user.id;
+      await saveVoiceOwners();
+    }
     res.json({ voice_id: `local:${d.id}`, name: d.name });
   } catch (e) {
     res.status(500).json({ error: 'Local TTS service unreachable. Is tts_local/app.py running? ' + e.message });
@@ -785,6 +901,7 @@ function makeEpisode(a, i = 0) {
     name: String(a.name || `Episode ${i + 1}`).slice(0, 80),
     lines: Array.isArray(a.lines) ? a.lines : [],
     voiceA: a.voiceA, voiceB: a.voiceB,
+    owner: a.owner || null,   // account id in hosted mode; null = legacy/local
     status: 'queued', line: 0, total: Array.isArray(a.lines) ? a.lines.length : 0,
     file: null, error: null, createdAt: Date.now(),
   };
@@ -865,14 +982,21 @@ app.post('/api/jobs', async (req, res) => {
     if (!(await ffmpegOk())) return res.status(500).json({ error: 'ffmpeg not found. Install it: brew install ffmpeg' });
     await loadEpisodes();
 
-    const items = audios.map((a, i) => makeEpisode(a, i));
+    const items = audios.map((a, i) => makeEpisode({ ...a, owner: req.user?.id || null }, i));
     for (const it of items) {
       if (!it.lines.length) return res.status(400).json({ error: `"${it.name}" has no script lines.` });
       if (!it.voiceA || !it.voiceB) return res.status(400).json({ error: `"${it.name}" is missing a Host A or Host B voice.` });
     }
 
+    // Shared-server fairness: one Mac synthesizes for everyone, so a non-admin
+    // account can have at most 4 episodes waiting/running at a time.
+    if (AUTH_ON && !isAdmin(req.user)) {
+      const active = episodes.filter((e) => e.owner === req.user.id && (e.status === 'queued' || e.status === 'running')).length;
+      if (active + items.length > 4) return res.status(429).json({ error: 'Queue limit: you can have at most 4 episodes generating at once. Let some finish first.' });
+    }
+
     const id = randomUUID().slice(0, 8);
-    jobs.set(id, { id, audios: items, createdAt: Date.now() });
+    jobs.set(id, { id, audios: items, owner: req.user?.id || null, createdAt: Date.now() });
     episodes.push(...items);      // same object refs -> worker updates flow to history
     await saveEpisodes();
     workQueue.push(...items);
@@ -883,17 +1007,24 @@ app.post('/api/jobs', async (req, res) => {
 
 app.get('/api/jobs/:id', (req, res) => {
   const job = jobs.get(req.params.id);
-  if (!job) return res.status(404).json({ error: 'No such job.' });
+  if (!job || !canSee(req.user, job.owner)) return res.status(404).json({ error: 'No such job.' });
   const audios = job.audios.map(audioSummary);
   res.json({ jobId: job.id, done: audios.every((a) => a.status === 'done' || a.status === 'error'), audios });
 });
 
 // List finished episodes on disk (so they're retrievable across restarts/tabs).
+// Hosted mode: only files belonging to the signed-in account's episodes; files
+// no episode references (pre-account strays) are admin-only.
 app.get('/api/outputs', async (req, res) => {
+  await loadEpisodes();
   await mkdir(OUTPUT_DIR, { recursive: true });
   const names = (await readdir(OUTPUT_DIR).catch(() => [])).filter((f) => f.toLowerCase().endsWith('.mp3'));
+  const referenced = new Map(); // file -> owner
+  for (const e of episodes) if (e.file) referenced.set(e.file, e.owner || null);
   const outputs = [];
   for (const f of names) {
+    const owner = referenced.has(f) ? referenced.get(f) : null;
+    if (!canSee(req.user, owner)) continue;
     const s = await stat(path.join(OUTPUT_DIR, f)).catch(() => null);
     if (s) outputs.push({ file: f, size: s.size, mtime: s.mtimeMs });
   }
@@ -913,6 +1044,7 @@ app.get('/api/history', async (req, res) => {
   const history = [];
   for (const e of episodes) {
     if (e.file) referenced.add(e.file);
+    if (!canSee(req.user, e.owner)) continue;
     let size = null;
     const present = !!(e.file && onDisk.has(e.file));
     if (present) { const s = await stat(path.join(OUTPUT_DIR, e.file)).catch(() => null); if (s) size = s.size; }
@@ -925,10 +1057,13 @@ app.get('/api/history', async (req, res) => {
       regenerable: Array.isArray(e.lines) && e.lines.length > 0 && !!e.voiceA && !!e.voiceB,
     });
   }
-  for (const f of onDisk) {
-    if (referenced.has(f) || f === path.basename(EPISODES_FILE)) continue;
-    const s = await stat(path.join(OUTPUT_DIR, f)).catch(() => null);
-    history.push({ id: null, name: f.replace(/\.mp3$/i, ''), file: f, present: true, size: s ? s.size : null, status: 'done', error: null, createdAt: s ? s.mtimeMs : 0, lines: 0, regenerable: false });
+  // mp3s on disk that no episode references (pre-account strays): admin-only.
+  if (canSee(req.user, null)) {
+    for (const f of onDisk) {
+      if (referenced.has(f) || f === path.basename(EPISODES_FILE)) continue;
+      const s = await stat(path.join(OUTPUT_DIR, f)).catch(() => null);
+      history.push({ id: null, name: f.replace(/\.mp3$/i, ''), file: f, present: true, size: s ? s.size : null, status: 'done', error: null, createdAt: s ? s.mtimeMs : 0, lines: 0, regenerable: false });
+    }
   }
   history.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   res.json({ history });
@@ -941,13 +1076,13 @@ app.post('/api/regenerate', async (req, res) => {
     await loadEpisodes();
     const { id } = req.body || {};
     const src = episodes.find((e) => e.id === id);
-    if (!src) return res.status(404).json({ error: 'No such episode in history.' });
+    if (!src || !canSee(req.user, src.owner)) return res.status(404).json({ error: 'No such episode in history.' });
     if (!Array.isArray(src.lines) || !src.lines.length || !src.voiceA || !src.voiceB) {
       return res.status(400).json({ error: 'This episode has no saved script/voices to regenerate from.' });
     }
-    const item = makeEpisode({ name: src.name, lines: src.lines, voiceA: src.voiceA, voiceB: src.voiceB });
+    const item = makeEpisode({ name: src.name, lines: src.lines, voiceA: src.voiceA, voiceB: src.voiceB, owner: req.user?.id || src.owner || null });
     const jid = randomUUID().slice(0, 8);
-    jobs.set(jid, { id: jid, audios: [item], createdAt: Date.now() });
+    jobs.set(jid, { id: jid, audios: [item], owner: item.owner, createdAt: Date.now() });
     episodes.push(item);
     await saveEpisodes();
     workQueue.push(item);
@@ -959,7 +1094,7 @@ app.post('/api/regenerate', async (req, res) => {
 app.post('/api/prioritize', async (req, res) => {
   const { id, position = 0 } = req.body || {};
   const idx = workQueue.findIndex((a) => a.id === id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found in queue.' });
+  if (idx === -1 || !canSee(req.user, workQueue[idx].owner)) return res.status(404).json({ error: 'Not found in queue.' });
   if (idx === position) return res.json({ ok: true });
   const [item] = workQueue.splice(idx, 1);
   workQueue.splice(Math.max(0, position), 0, item);
@@ -971,7 +1106,7 @@ app.patch('/api/episode/:id', async (req, res) => {
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
   await loadEpisodes();
   const ep = episodes.find(e => e.id === req.params.id);
-  if (!ep) return res.status(404).json({ error: 'Episode not found' });
+  if (!ep || !canSee(req.user, ep.owner)) return res.status(404).json({ error: 'Episode not found' });
   ep.name = name.trim().slice(0, 100);
   await saveEpisodes();
   res.json({ ok: true, name: ep.name });
@@ -983,6 +1118,7 @@ app.post('/api/cancel', async (req, res) => {
   const qIdx = workQueue.findIndex((a) => a.id === id);
   if (qIdx !== -1) {
     const audio = workQueue[qIdx];
+    if (!canSee(req.user, audio.owner)) return res.status(404).json({ error: 'Not found or already done.' });
     audio.cancelled = true;
     audio.status = 'cancelled';
     audio.error = 'Cancelled';
@@ -992,6 +1128,7 @@ app.post('/api/cancel', async (req, res) => {
   }
   // 2. Currently being synthesized
   if (currentAudio?.id === id && currentAbortCtrl) {
+    if (!canSee(req.user, currentAudio.owner)) return res.status(404).json({ error: 'Not found or already done.' });
     currentAudio.cancelled = true;
     currentAbortCtrl.abort(new Error('Cancelled by user'));
     return res.json({ ok: true });
@@ -999,6 +1136,7 @@ app.post('/api/cancel', async (req, res) => {
   // 3. Stuck as queued/running in the history DB (e.g. after a server restart)
   await loadEpisodes();
   const ep = episodes.find((e) => e.id === id);
+  if (ep && !canSee(req.user, ep.owner)) return res.status(404).json({ error: 'Not found or already done.' });
   if (ep && (ep.status === 'queued' || ep.status === 'running')) {
     ep.status = 'cancelled';
     ep.error = 'Cancelled';
@@ -1008,7 +1146,21 @@ app.post('/api/cancel', async (req, res) => {
   res.status(404).json({ error: 'Not found or already done.' });
 });
 
-app.use('/output', express.static(OUTPUT_DIR));
+// Finished mp3s. Hosted mode: you can only download files that belong to your
+// episodes (unreferenced pre-account files are admin-only). Only .mp3 is served
+// so the episodes.json manifest (scripts + metadata) is never downloadable.
+app.get('/output/:file', async (req, res) => {
+  const f = path.basename(req.params.file);
+  if (!f.toLowerCase().endsWith('.mp3')) return res.status(404).json({ error: 'Not found' });
+  if (AUTH_ON) {
+    await loadEpisodes();
+    const ep = episodes.find((e) => e.file === f);
+    if (!canSee(req.user, ep ? ep.owner || null : null)) return res.status(404).json({ error: 'Not found' });
+  }
+  res.sendFile(path.join(OUTPUT_DIR, f), (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'Not found' });
+  });
+});
 
 app.post('/api/extract-url', async (req, res) => {
   try {

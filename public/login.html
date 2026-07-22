@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Sign in — Podcast Studio</title>
+<title>Podcast Studio — Sign in</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -13,26 +13,33 @@
     color: #e8eaf2; padding: 24px;
   }
   .card {
-    width: 100%; max-width: 380px; background: rgba(255,255,255,0.04);
+    width: 100%; max-width: 400px; background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.09); border-radius: 16px;
-    padding: 36px 32px; backdrop-filter: blur(8px);
+    padding: 34px 32px; backdrop-filter: blur(8px);
     box-shadow: 0 20px 60px rgba(0,0,0,0.45);
   }
-  .logo { font-size: 40px; text-align: center; }
-  h1 { font-size: 22px; font-weight: 700; text-align: center; margin-top: 10px; }
-  .sub { color: #9aa1b5; font-size: 14px; text-align: center; margin: 6px 0 26px; }
-  #googleBtn { display: flex; justify-content: center; min-height: 0; }
-  .divider { display: flex; align-items: center; gap: 12px; color: #6a7188; font-size: 12px; margin: 20px 0; text-transform: uppercase; letter-spacing: .08em; }
+  .logo { font-size: 38px; text-align: center; }
+  h1 { font-size: 22px; font-weight: 700; text-align: center; margin-top: 8px; }
+  .sub { color: #9aa1b5; font-size: 13.5px; text-align: center; margin: 6px 0 22px; line-height: 1.45; }
+  #googleBtn { display: flex; justify-content: center; }
+  .divider { display: flex; align-items: center; gap: 12px; color: #6a7188; font-size: 11px; margin: 18px 0 16px; text-transform: uppercase; letter-spacing: .08em; }
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: rgba(255,255,255,0.1); }
-  label { display: block; font-size: 13px; color: #9aa1b5; margin-bottom: 6px; }
-  input[type=password] {
-    width: 100%; padding: 12px 14px; border-radius: 10px; font-size: 15px;
+  .tabs { display: flex; background: rgba(0,0,0,0.3); border-radius: 10px; padding: 4px; margin-bottom: 18px; }
+  .tabs button {
+    flex: 1; padding: 9px 0; border: 0; border-radius: 8px; background: transparent;
+    color: #9aa1b5; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .15s;
+  }
+  .tabs button.active { background: rgba(255,255,255,0.1); color: #fff; }
+  label { display: block; font-size: 13px; color: #9aa1b5; margin: 12px 0 6px; }
+  input {
+    width: 100%; padding: 11px 14px; border-radius: 10px; font-size: 15px;
     border: 1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.35); color: #e8eaf2;
     outline: none;
   }
-  input[type=password]:focus { border-color: #6a8dff; }
+  input:focus { border-color: #6a8dff; }
+  .hint { font-size: 12px; color: #6a7188; margin-top: 5px; }
   button.primary {
-    width: 100%; margin-top: 14px; padding: 12px; border: 0; border-radius: 10px;
+    width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius: 10px;
     background: linear-gradient(135deg, #5b7cfa, #7a5bfa); color: #fff;
     font-size: 15px; font-weight: 600; cursor: pointer;
   }
@@ -46,29 +53,56 @@
   <main class="card">
     <div class="logo">🎙️</div>
     <h1>Podcast Studio</h1>
-    <p class="sub">Sign in to continue</p>
+    <p class="sub">Turn any text or article into a two-host podcast.<br/>Sign in or create a free account to start.</p>
 
     <div id="googleWrap" class="hidden">
       <div id="googleBtn"></div>
-      <div class="divider" id="orDivider">or</div>
+      <div class="divider">or use email</div>
     </div>
 
-    <form id="pwForm" class="hidden">
+    <div class="tabs">
+      <button type="button" id="tabSignin" class="active">Sign in</button>
+      <button type="button" id="tabSignup">Create account</button>
+    </div>
+
+    <form id="authForm">
+      <div id="nameRow" class="hidden">
+        <label for="name">Your name</label>
+        <input type="text" id="name" autocomplete="name" maxlength="60" placeholder="Alex" />
+      </div>
+      <label for="email">Email</label>
+      <input type="email" id="email" autocomplete="email" required placeholder="you@example.com" />
       <label for="pw">Password</label>
-      <input type="password" id="pw" autocomplete="current-password" autofocus />
-      <button class="primary" type="submit" id="pwBtn">Sign in</button>
+      <input type="password" id="pw" autocomplete="current-password" required />
+      <p class="hint hidden" id="pwHint">At least 8 characters.</p>
+      <button class="primary" type="submit" id="submitBtn">Sign in</button>
     </form>
 
     <p class="error" id="err"></p>
   </main>
 
 <script>
-  const err = (m) => { document.getElementById('err').textContent = m || ''; };
+  let mode = 'signin';
+  const $ = (id) => document.getElementById(id);
+  const err = (m) => { $('err').textContent = m || ''; };
+
+  function setMode(m) {
+    mode = m;
+    err('');
+    $('tabSignin').classList.toggle('active', m === 'signin');
+    $('tabSignup').classList.toggle('active', m === 'signup');
+    $('nameRow').classList.toggle('hidden', m !== 'signup');
+    $('pwHint').classList.toggle('hidden', m !== 'signup');
+    $('submitBtn').textContent = m === 'signup' ? 'Create account' : 'Sign in';
+    $('pw').setAttribute('autocomplete', m === 'signup' ? 'new-password' : 'current-password');
+  }
+  $('tabSignin').addEventListener('click', () => setMode('signin'));
+  $('tabSignup').addEventListener('click', () => setMode('signup'));
 
   async function finishLogin(res) {
     const data = await res.json().catch(() => ({}));
     if (res.ok) { location.href = '/'; }
-    else { err(data.error || 'Sign-in failed.'); }
+    else { err(data.error || 'Something went wrong. Try again.'); }
   }
 
   async function onGoogleCredential(response) {
@@ -80,15 +114,17 @@
     finishLogin(res);
   }
 
-  document.getElementById('pwForm').addEventListener('submit', async (e) => {
+  $('authForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     err('');
-    const btn = document.getElementById('pwBtn');
+    const btn = $('submitBtn');
     btn.disabled = true;
     try {
-      const res = await fetch('/api/login', {
+      const body = { email: $('email').value, password: $('pw').value };
+      if (mode === 'signup') body.name = $('name').value;
+      const res = await fetch(mode === 'signup' ? '/api/signup' : '/api/login', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ password: document.getElementById('pw').value }),
+        body: JSON.stringify(body),
       });
       await finishLogin(res);
     } finally { btn.disabled = false; }
@@ -96,15 +132,13 @@
 
   (async () => {
     const cfg = await fetch('/api/auth/config').then((r) => r.json()).catch(() => ({}));
-    if (cfg.passwordEnabled) document.getElementById('pwForm').classList.remove('hidden');
     if (cfg.googleClientId) {
       const s = document.createElement('script');
       s.src = 'https://accounts.google.com/gsi/client';
       s.onload = () => {
         google.accounts.id.initialize({ client_id: cfg.googleClientId, callback: onGoogleCredential });
-        google.accounts.id.renderButton(document.getElementById('googleBtn'), { theme: 'filled_black', size: 'large', width: 316 });
-        document.getElementById('googleWrap').classList.remove('hidden');
-        if (!cfg.passwordEnabled) document.getElementById('orDivider').classList.add('hidden');
+        google.accounts.id.renderButton($('googleBtn'), { theme: 'filled_black', size: 'large', width: 334, text: 'continue_with' });
+        $('googleWrap').classList.remove('hidden');
       };
       document.head.appendChild(s);
     }

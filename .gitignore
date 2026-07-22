@@ -38,3 +38,6 @@ voices_replicate/
 *.bak
 *.bak-*
 *.log
+
+# ---- hosted-mode account database ----
+data/
