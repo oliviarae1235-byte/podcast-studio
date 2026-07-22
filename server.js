@@ -11,6 +11,7 @@
 import 'dotenv/config';
 import express from 'express';
 import multer from 'multer';
+import { PDFParse } from 'pdf-parse';
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile, readFile, rm, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -260,8 +261,8 @@ ${source.slice(0, 40000)}
 """`;
 }
 
-async function generateScript(params) {
-  const prompt = buildScriptPrompt(params);
+// One raw completion from whichever LLM provider is configured.
+async function llmComplete(prompt, { temperature = 0.8 } = {}) {
   if (LLM_PROVIDER === 'anthropic') {
     if (!ANTHROPIC_KEY) throw new Error('ANTHROPIC_API_KEY not set.');
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -271,18 +272,22 @@ async function generateScript(params) {
     });
     if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
     const data = await res.json();
-    return parseScript((data.content || []).map((b) => b.text || '').join('\n'));
+    return (data.content || []).map((b) => b.text || '').join('\n');
   }
   if (!OPENAI_KEY) throw new Error('OPENAI_API_KEY not set.');
   const base = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
   const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${OPENAI_KEY}` },
-    body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], temperature: 0.8 }),
+    body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], temperature }),
   });
   if (!res.ok) throw new Error(`LLM ${res.status}: ${await res.text()}`);
   const data = await res.json();
-  return parseScript(data.choices?.[0]?.message?.content || '');
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function generateScript(params) {
+  return parseScript(await llmComplete(buildScriptPrompt(params)));
 }
 
 function parseScript(raw) {
@@ -813,8 +818,8 @@ function detectHosts(source) {
     const m = raw.match(labelRe);
     if (!m) continue;
     const name = m[1].trim();
-    // skip obvious non-speaker labels (urls, timestamps, numbering)
-    if (!name || /^https?$/i.test(name) || /^[\d\s.:-]+$/.test(name)) continue;
+    // skip obvious non-speaker labels (urls, timestamps, numbering, headings)
+    if (!name || /^https?$/i.test(name) || /^[\d\s.:-]+$/.test(name) || /^(episode|ep\.?|part|chapter|scene|act)\s*[#\d]*$/i.test(name)) continue;
     const key = name.toLowerCase();
     const e = counts.get(key) || { name, count: 0, first: order++ };
     e.count++;
@@ -850,6 +855,100 @@ app.post('/api/script', async (req, res) => {
     }
 
     res.json(await generateScript({ source, hostA, hostB, tone, minutes, language }));
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+
+// ---------- PDF batch import ----------
+// One PDF may hold many finished scripts. The LLM is asked ONLY for episode
+// boundaries and titles (as line numbers into the extracted text); the original
+// text is then sliced verbatim — scripts are never rewritten. Header-pattern
+// splitting is the fallback when no LLM is reachable.
+
+function heuristicSplit(lines) {
+  // A heading marker anywhere in the line ("EPISODE 2: ...", "... - S1E10")
+  // beats the speaker pattern — "EPISODE 2: TITLE" is a heading, not dialogue.
+  const headerPat = /^(episode|ep\.?|part|chapter|script)\s*[#\d]|\bs\d+\s*e\d+\b|^#{1,3}\s/i;
+  const isSpeaker = (l) => /^\s*[^:\n]{1,30}?\s*:\s*\S/.test(l) && !headerPat.test(l);
+  const isHeader = (l) => {
+    const t = l.trim();
+    if (!t || t.length > 70) return false;
+    if (headerPat.test(t)) return true;
+    if (isSpeaker(l)) return false;
+    const letters = t.replace(/[^a-z]/gi, '');
+    return letters.length >= 4 && letters === letters.toUpperCase(); // ALL-CAPS title line
+  };
+  const bounds = [];
+  lines.forEach((l, i) => { if (isHeader(l)) bounds.push(i); });
+  if (!bounds.length || bounds[0] !== 0) bounds.unshift(0);
+  return bounds.map((b, j) => ({
+    title: isHeader(lines[b] || '') ? lines[b].trim().replace(/^#+\s*/, '') : '',
+    start: b,
+    end: j + 1 < bounds.length ? bounds[j + 1] - 1 : lines.length - 1,
+  }));
+}
+
+async function splitPdfScripts(text) {
+  const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+$/, ''));
+  let spans = null;
+  try {
+    const skeleton = lines.slice(0, 4000).map((l, i) => `${i}| ${l.slice(0, 80)}`).join('\n');
+    const raw = await llmComplete(`The numbered lines below were extracted from a PDF holding one or MORE podcast scripts (dialogue lines look like "Name: text"). Identify each separate episode script.
+
+Return ONLY valid JSON, no code fences:
+{"episodes":[{"title":"short episode title (use the heading in the text if there is one)","start":<number of the episode's first line, including its heading>,"end":<number of its last line>}]}
+
+Rules:
+- Episodes appear in order and must not overlap.
+- Every dialogue line belongs to exactly one episode.
+- If the document is a single script, return one episode covering it all.
+
+LINES:
+${skeleton}`, { temperature: 0.2 });
+    let t = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const s = t.indexOf('{'), e = t.lastIndexOf('}');
+    if (s !== -1 && e !== -1) t = t.slice(s, e + 1);
+    const parsed = JSON.parse(t);
+    if (Array.isArray(parsed.episodes) && parsed.episodes.length) {
+      spans = parsed.episodes
+        .map((ep) => ({ title: String(ep.title || '').trim().slice(0, 80), start: Math.max(0, ep.start | 0), end: Math.min(lines.length - 1, ep.end | 0) }))
+        .filter((ep) => ep.end >= ep.start)
+        .sort((a, b) => a.start - b.start);
+    }
+  } catch (e) {
+    console.log('[pdf] LLM split unavailable, falling back to header heuristics:', e.message || e);
+  }
+  if (!spans || !spans.length) spans = heuristicSplit(lines);
+
+  const episodes = [];
+  for (const [i, span] of spans.entries()) {
+    const chunk = lines.slice(span.start, span.end + 1).join('\n');
+    const hosts = detectHosts(chunk);
+    if (!hosts.length) continue;
+    const parsedLines = parseVerbatim(chunk, hosts[0], hosts[1] || '');
+    if (!parsedLines.length) continue;
+    episodes.push({
+      name: span.title || `Episode ${i + 1}`,
+      hostA: hosts[0],
+      hostB: hosts[1] || 'Host B',
+      lines: parsedLines,
+    });
+  }
+  return episodes;
+}
+
+app.post('/api/pdf-scripts', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Upload a PDF file.' });
+    const parser = new PDFParse({ data: new Uint8Array(req.file.buffer) });
+    let text = '';
+    try { text = ((await parser.getText()).text || '').trim(); }
+    finally { await parser.destroy().catch(() => {}); }
+    if (text.length < 20) return res.status(400).json({ error: 'No readable text in that PDF (is it scanned images?).' });
+    const episodes = await splitPdfScripts(text);
+    if (!episodes.length) {
+      return res.status(400).json({ error: 'No speaker lines found. Scripts should have lines like "Maya: Welcome back." — one speaker per line.' });
+    }
+    res.json({ episodes });
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 
@@ -1032,10 +1131,11 @@ app.post('/api/jobs', async (req, res) => {
     }
 
     // Shared-server fairness: one Mac synthesizes for everyone, so a non-admin
-    // account can have at most 4 episodes waiting/running at a time.
+    // account can have at most 12 episodes waiting/running at a time (enough
+    // for a 10-script PDF batch).
     if (AUTH_ON && !isAdmin(req.user)) {
       const active = episodes.filter((e) => e.owner === req.user.id && (e.status === 'queued' || e.status === 'running')).length;
-      if (active + items.length > 4) return res.status(429).json({ error: 'Queue limit: you can have at most 4 episodes generating at once. Let some finish first.' });
+      if (active + items.length > 12) return res.status(429).json({ error: 'Queue limit: you can have at most 12 episodes generating at once. Let some finish first.' });
     }
 
     const id = randomUUID().slice(0, 8);

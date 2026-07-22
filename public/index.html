@@ -178,6 +178,7 @@
     <div class="tabs" id="srcTabs">
       <button class="on" data-t="text">Text</button>
       <button data-t="url">Article link</button>
+      <button data-t="pdf">PDF file</button>
     </div>
     <div id="paneText">
       <textarea id="source" rows="7" placeholder="Paste an article, your notes, a topic brief, a transcript..."></textarea>
@@ -190,6 +191,11 @@
       </div>
       <p class="hint">Pulls the readable text into the box below; review it before generating.</p>
       <textarea id="sourceUrl" rows="5" placeholder="Fetched text will appear here..." style="margin-top:10px"></textarea>
+    </div>
+    <div id="panePdf" style="display:none">
+      <label>Script PDF — one or many episodes</label>
+      <input type="file" id="pdfFile" accept="application/pdf,.pdf" style="padding:9px">
+      <p class="hint">Drop in a PDF holding any number of finished scripts ("Name: line" format). Episodes are split, named, and host names detected automatically — nothing is rewritten.</p>
     </div>
 
     <div class="row" style="margin-top:18px">
@@ -214,6 +220,10 @@
   <section class="step dim" id="s2">
     <h2><span class="n">2</span> Script <span id="epTitle" style="font-family:Fraunces;text-transform:none;letter-spacing:0;color:var(--muted);font-weight:400"></span></h2>
     <p class="sub">Edit any line before you spend voice credits. A = host A, B = host B.</p>
+    <div id="pdfListWrap" style="display:none;margin:0 0 16px;border:1px solid var(--line);border-radius:10px;padding:14px;background:#120f0b">
+      <label>Episodes found in the PDF — rename freely, click one to edit its lines</label>
+      <div id="pdfList" class="lines" style="max-height:220px;margin-top:8px"></div>
+    </div>
     <div class="lines" id="lines"></div>
     <button class="ghost" id="regenBtn" style="margin-top:14px">↺ Rewrite</button>
   </section>
@@ -279,6 +289,9 @@
         <button class="cta" id="genBtn" style="margin-top:0">Generate now ♫</button>
         <button class="ghost" id="addBatchBtn" style="margin-top:0">+ Add to batch</button>
       </div>
+    </div>
+    <div id="addAllWrap" style="display:none;margin-top:12px">
+      <button class="ghost" id="addAllBtn">＋ Stage all PDF episodes in the batch</button>
     </div>
     <div class="msg" id="m4"></div>
 
@@ -374,6 +387,14 @@ $('srcTabs').addEventListener('click', e=>{
   const t=e.target.dataset.t;
   $('paneText').style.display = t==='text'?'block':'none';
   $('paneUrl').style.display  = t==='url'?'block':'none';
+  $('panePdf').style.display  = t==='pdf'?'block':'none';
+  if(t==='pdf'){
+    // PDF batch works verbatim-only: switch modes automatically.
+    if(mode!=='verbatim') $('modeTabs').querySelector('[data-m="verbatim"]').click();
+    $('scriptBtn').textContent='Parse PDF →';
+  } else {
+    $('scriptBtn').textContent = mode==='verbatim' ? 'Use my script →' : 'Write the script →';
+  }
 });
 
 // ---- mode: write-for-me vs verbatim ----
@@ -390,7 +411,9 @@ $('modeTabs').addEventListener('click', e=>{
   $('source').placeholder = v
     ? 'Edith: Welcome back to the show.\nSam: Glad to be here. Today we\'re talking about...'
     : 'Paste an article, your notes, a topic brief, a transcript...';
-  $('scriptBtn').textContent = v ? 'Use my script →' : 'Write the script →';
+  const pdfPane = $('panePdf').style.display!=='none';
+  if(!v && pdfPane) $('srcTabs').querySelector('[data-t="text"]').click();
+  $('scriptBtn').textContent = (v && pdfPane) ? 'Parse PDF →' : v ? 'Use my script →' : 'Write the script →';
 });
 
 function currentSource(){
@@ -411,6 +434,7 @@ $('fetchBtn').onclick = async ()=>{
 
 // ---- step 1 -> script ----
 async function writeScript(){
+  if($('panePdf').style.display!=='none'){ return parsePdf(); }
   const source=currentSource();
   if(source.length<20){ msg($('m1'),'Add at least a couple sentences of content.','e'); return; }
   clearMsg($('m1'));
@@ -1036,6 +1060,69 @@ function playButton(file, name){
   btn.onclick=()=>playEpisode(file,name);
   return btn;
 }
+
+// ---- PDF batch import ----
+// A PDF may hold many finished scripts; the server splits + names them without
+// rewriting a word. The episodes flow into the existing batch queue.
+let pdfEpisodes=[];
+
+async function parsePdf(){
+  const f=$('pdfFile').files[0];
+  if(!f){ msg($('m1'),'Choose a PDF file first.','e'); return; }
+  clearMsg($('m1'));
+  $('scriptBtn').disabled=true; $('scriptBtn').innerHTML='<span class="spin"></span>Reading PDF…';
+  try{
+    const fd=new FormData(); fd.append('file',f);
+    const r=await fetch('/api/pdf-scripts',{method:'POST',body:fd});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    pdfEpisodes=d.episodes;
+    loadPdfEpisode(0);
+    show($('s2')); show($('s3')); show($('s4'));
+    $('addAllWrap').style.display = pdfEpisodes.length>1 ? 'block' : 'none';
+    msg($('m1'),'Found '+pdfEpisodes.length+' episode'+(pdfEpisodes.length>1?'s':'')+' in the PDF. '+(pdfEpisodes.length>1?'Rename them in step 2, assign voices in step 3, then stage them all in step 4.':''),'i');
+  }catch(e){ msg($('m1'),'PDF failed: '+e.message,'e'); }
+  $('scriptBtn').disabled=false; $('scriptBtn').textContent='Parse PDF →';
+}
+
+function loadPdfEpisode(i){
+  const ep=pdfEpisodes[i]; if(!ep) return;
+  $('hostA').value=ep.hostA||''; $('hostB').value=ep.hostB||'';
+  // Same array reference on purpose: line edits in the editor stick to the episode.
+  script={ title: ep.name, lines: ep.lines };
+  $('epName').value=ep.name;
+  renderScript();
+  renderPdfList(i);
+}
+
+function renderPdfList(activeIdx){
+  const wrap=$('pdfListWrap'), box=$('pdfList');
+  if(pdfEpisodes.length<2){ wrap.style.display='none'; return; }
+  wrap.style.display='block'; box.innerHTML='';
+  pdfEpisodes.forEach((ep,i)=>{
+    const row=document.createElement('div'); row.className='line'; row.style.alignItems='center';
+    const inp=document.createElement('input'); inp.type='text'; inp.value=ep.name;
+    inp.style.cssText='flex:1;padding:8px 10px;font-size:13px';
+    inp.oninput=()=>{ ep.name=inp.value; if(i===activeIdx){ $('epName').value=inp.value; $('epTitle').textContent='— '+inp.value; } };
+    const meta=document.createElement('span');
+    meta.style.cssText='color:var(--muted);font-size:12px;flex:0 0 auto';
+    meta.textContent=ep.lines.length+' lines · '+ep.hostA+' & '+ep.hostB;
+    const openBtn=document.createElement('button'); openBtn.className='ghost';
+    openBtn.style.cssText='margin:0;padding:5px 12px;font-size:12px'+(i===activeIdx?';border-color:var(--accent);color:var(--accent2)':'');
+    openBtn.textContent = i===activeIdx?'Editing':'Edit';
+    openBtn.onclick=()=>loadPdfEpisode(i);
+    row.append(inp,meta,openBtn); box.append(row);
+  });
+}
+
+$('addAllBtn').onclick=()=>{
+  if(!pdfEpisodes.length) return;
+  if(!voiceA||!voiceB){ msg($('m4'),'Assign a voice to both Host A and Host B (step 3) first.','e'); return; }
+  pdfEpisodes.forEach(ep=>{
+    batch.push({ name:(ep.name||'Episode').trim(), lines: JSON.parse(JSON.stringify(ep.lines)), voiceA, voiceB });
+  });
+  renderBatch();
+  msg($('m4'),'Staged '+pdfEpisodes.length+' episodes in the batch. Review below, then Generate all.','i');
+};
 </script>
 
 <div id="miniPlayer">
