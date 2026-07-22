@@ -1,15 +1,45 @@
 # Podcast Studio
 
-> **Fastest free setup → use the Colab GPU engine.** See `colab/README_COLAB.md`.
-> It runs the voices on a free cloud GPU (fast + cloning works) instead of your Mac.
-> The rest of this README covers the all-local option, which is slower on a laptop.
-
-
 A local AI podcast generator. Paste text (or an article URL) → an LLM writes a two-host
 conversation → real voices speak each line → it stitches one downloadable MP3.
 
 **Can run 100% free:** Groq (free) writes the script, and Chatterbox (free, local) does all
-the voices *and* voice cloning right on your Mac. ElevenLabs is optional.
+the voices *and* voice cloning right on your machine. ElevenLabs is optional.
+
+---
+
+## Quick start (macOS / Linux)
+
+You need [Node.js](https://nodejs.org), **ffmpeg**, and **Python 3.10–3.12** installed
+(on a Mac: `brew install node ffmpeg python@3.11`). Then:
+
+```bash
+git clone https://github.com/oliviarae1235-byte/podcast-studio.git
+cd podcast-studio
+./setup.sh          # one-time: installs everything (big first download: PyTorch)
+open -e .env        # paste your FREE Groq key from console.groq.com as OPENAI_API_KEY
+./start.sh          # runs the app + voice engine together
+```
+
+Open **http://localhost:3000** — that's it. The first episode you generate downloads the
+voice model (~2 GB) and is slow; after that it's much faster.
+
+**Windows:** install [WSL](https://learn.microsoft.com/windows/wsl/install) (Ubuntu) and
+follow the same steps inside it — or use the Colab voice engine below and run just the
+Node app natively.
+
+> **Slow laptop?** Use the free **Colab GPU engine** instead of local voices — see
+> `colab/README_COLAB.md`. It runs the same voice model on a free cloud GPU.
+
+---
+
+## Optional: protect it with a login
+
+Running it only on your own laptop? Skip this — there's no login step by default.
+
+If you host it on the internet, set `APP_PASSWORD` (and optionally Google Sign-In via
+`GOOGLE_CLIENT_ID` + `ALLOWED_EMAILS`) in `.env` — see the comments there. A login page
+then guards all your episodes, history, and cloned voices.
 
 ---
 

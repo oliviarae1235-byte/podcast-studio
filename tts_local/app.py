@@ -148,6 +148,10 @@ def to_wav(src_bytes: bytes, out_path: Path):
 
 # --- routes -------------------------------------------------------------------
 
+@app.get("/")
+def root():
+    return {"service": "podcast-studio-tts", "status": "ok", "docs": "/docs"}
+
 @app.get("/health")
 def health():
     return {"ok": True, "device": _device, "model_loaded": _model is not None}
@@ -210,6 +214,19 @@ async def tts(payload: dict):
         raise HTTPException(500, f"Synthesis failed: {e}")
 
     audio = wav.squeeze().detach().cpu().numpy()
+    # Release GPU memory after each synthesis so back-to-back requests (e.g. a
+    # multi-host podcast rendering many segments in a row) don't accumulate on the
+    # MPS allocator, slow to a crawl, and get the service SIGKILL'd. Additive only —
+    # no change to output or behavior.
+    try:
+        del wav
+        import gc
+        gc.collect()
+        if _device == "mps":
+            import torch
+            torch.mps.empty_cache()
+    except Exception:
+        pass
     buf = io.BytesIO()
     sf.write(buf, audio, model.sr, format="WAV")
     return Response(content=buf.getvalue(), media_type="audio/wav")

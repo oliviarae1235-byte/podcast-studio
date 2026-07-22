@@ -16,7 +16,7 @@ import { mkdir, writeFile, readFile, rm, readdir, stat } from 'node:fs/promises'
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,7 +38,96 @@ const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 const app = express();
+app.set('trust proxy', 1); // behind cloudflared: real client IP + https detection
 app.use(express.json({ limit: '2mb' }));
+
+// ---------- access control ----------
+// Enforced only when APP_PASSWORD and/or GOOGLE_CLIENT_ID is set in .env, so a
+// fresh local install has no login step. On a public instance set both: password
+// as fallback, Google Sign-In (restricted to ALLOWED_EMAILS) as the main path.
+const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const AUTH_ON = !!(APP_PASSWORD || GOOGLE_CLIENT_ID);
+// Without a fixed SESSION_SECRET every restart logs everyone out.
+const SESSION_SECRET = process.env.SESSION_SECRET || randomUUID();
+const SESSION_DAYS = 30;
+const AUTH_COOKIE = 'ps_auth';
+
+const signSession = (exp) => `${exp}.${createHmac('sha256', SESSION_SECRET).update(String(exp)).digest('hex')}`;
+function hasValidSession(req) {
+  const raw = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(AUTH_COOKIE + '='));
+  if (!raw) return false;
+  const [exp, sig] = raw.slice(AUTH_COOKIE.length + 1).split('.');
+  if (!exp || !sig || !/^\d+$/.test(exp) || Number(exp) < Date.now()) return false;
+  const expect = createHmac('sha256', SESSION_SECRET).update(String(exp)).digest('hex');
+  return sig.length === expect.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expect));
+}
+function setSession(req, res) {
+  const exp = Date.now() + SESSION_DAYS * 24 * 3600 * 1000;
+  const secure = req.secure ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${AUTH_COOKIE}=${signSession(exp)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 3600}${secure}`);
+}
+
+// brute-force brake: 8 bad passwords from one IP -> locked out for 10 minutes
+const failedLogins = new Map();
+const throttled = (ip) => { const f = failedLogins.get(ip); return f && f.count >= 8 && Date.now() - f.at < 10 * 60 * 1000; };
+const recordFail = (ip) => { const f = failedLogins.get(ip) || { count: 0, at: 0 }; f.count++; f.at = Date.now(); failedLogins.set(ip, f); };
+
+const AUTH_OPEN = new Set(['/login', '/login.html', '/api/login', '/api/auth/google', '/api/auth/config', '/logout', '/favicon.ico']);
+app.use((req, res, next) => {
+  if (!AUTH_ON || AUTH_OPEN.has(req.path) || hasValidSession(req)) return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/output/')) return res.status(401).json({ error: 'Not signed in.' });
+  res.redirect('/login');
+});
+
+app.get('/login', (req, res) => {
+  if (!AUTH_ON || hasValidSession(req)) return res.redirect('/');
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/api/auth/config', (req, res) => res.json({ googleClientId: GOOGLE_CLIENT_ID || null, passwordEnabled: !!APP_PASSWORD }));
+
+app.post('/api/login', (req, res) => {
+  const ip = req.ip || 'unknown';
+  if (!APP_PASSWORD) return res.status(400).json({ error: 'Password login is not enabled.' });
+  if (throttled(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 10 minutes.' });
+  const given = Buffer.from(String(req.body?.password || ''));
+  const want = Buffer.from(APP_PASSWORD);
+  if (given.length !== want.length || !timingSafeEqual(given, want)) {
+    recordFail(ip);
+    return res.status(401).json({ error: 'Wrong password.' });
+  }
+  failedLogins.delete(ip);
+  setSession(req, res);
+  res.json({ ok: true });
+});
+
+// Google Sign-In: the login page posts the ID token (credential) from Google's
+// button; Google's tokeninfo endpoint checks the signature, we check that the
+// token was issued for OUR client id and that the email is on the allowlist.
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    if (!GOOGLE_CLIENT_ID) return res.status(400).json({ error: 'Google sign-in is not configured.' });
+    const credential = String(req.body?.credential || '');
+    if (!credential) return res.status(400).json({ error: 'Missing Google credential.' });
+    const r = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+    const info = await r.json().catch(() => ({}));
+    if (!r.ok || info.aud !== GOOGLE_CLIENT_ID || info.email_verified !== 'true') {
+      return res.status(401).json({ error: 'Google sign-in could not be verified.' });
+    }
+    const email = String(info.email || '').toLowerCase();
+    if (!ALLOWED_EMAILS.includes(email)) return res.status(403).json({ error: `${email} is not on the allowed list.` });
+    setSession(req, res);
+    res.json({ ok: true, email });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+
+app.get('/logout', (req, res) => {
+  res.setHeader('Set-Cookie', `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  res.redirect('/login');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
 
@@ -125,13 +214,16 @@ async function elevenVoices() {
 
 async function localVoices() {
   try {
-    const r = await fetch(`${LOCAL_TTS_URL}/voices`);
-    if (!r.ok) return [];
-    const d = await r.json();
-    return (d.voices || []).map((v) => ({
-      voice_id: `local:${v.id}`, name: v.name, category: v.id === 'default' ? 'local · built-in' : 'local · clone',
-      labels: {}, preview_url: null,
-    }));
+    const regPath = path.join(__dirname, 'tts_local', 'voices', 'registry.json');
+    const reg = JSON.parse(await readFile(regPath, 'utf8'));
+    const voices = [
+      { voice_id: 'local:default', name: 'Chatterbox Default', category: 'local · built-in', labels: {}, preview_url: null },
+      ...Object.entries(reg).map(([id, meta]) => ({
+        voice_id: `local:${id}`, name: meta.name || id, category: 'local · clone', labels: {}, preview_url: null,
+      })),
+    ];
+    const clones = voices.filter(v => v.voice_id !== 'local:default');
+    return clones.length ? clones : voices;
   } catch { return []; }
 }
 
@@ -309,8 +401,8 @@ async function stitch(segPaths, outPath) {
 // --- resilient per-line synthesis (handles the local engine hanging mid-job) ---
 
 const CHUNK_SIZE = 7;                    // episodes are synthesized in batches of ~6-8 lines
-const LINE_STALL_MS = 3 * 60 * 1000;     // a single line taking longer than this = a hung engine
-const LINE_MAX_ATTEMPTS = 3;             // attempts per line before giving up on it
+const LINE_STALL_MS = 12 * 60 * 1000;    // a single line taking longer than this = a hung engine
+const LINE_MAX_ATTEMPTS = 8;             // attempts per line before giving up on it (higher for sleep/wake tolerance)
 
 // Restart the local TTS LaunchAgent and wait until it reports the model is loaded.
 // Used to recover from a hung Chatterbox engine without any manual intervention.
@@ -321,7 +413,8 @@ async function restartTts() {
     p.on('error', () => resolve());
     p.on('close', () => resolve());
   });
-  const deadline = Date.now() + 90 * 1000;
+  await sleep(15000); // let macOS reclaim GPU memory from the killed process before reloading the model
+  const deadline = Date.now() + 3 * 60 * 1000;   // up to 3 min — model reload after sleep can be slow
   while (Date.now() < deadline) {
     try {
       const r = await fetch(`${LOCAL_TTS_URL}/health`, { signal: AbortSignal.timeout(3000) });
@@ -329,26 +422,33 @@ async function restartTts() {
     } catch {}
     await sleep(2000);
   }
-  console.log('[chunk] TTS did not report ready within 90s — retrying the line anyway.');
+  console.log('[chunk] TTS did not report ready within 3 min — retrying the line anyway.');
 }
 
-// Synthesize one line, aborting if it stalls past LINE_STALL_MS.
-function synthOnce(text, ref) {
+// Synthesize one line, aborting if it stalls past LINE_STALL_MS or if the job is cancelled.
+function synthOnce(text, ref, cancelSignal) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(new Error('per-line stall timeout')), LINE_STALL_MS);
-  return synth(text, ref, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
+  const onCancel = () => ctrl.abort(new Error('Cancelled by user'));
+  if (cancelSignal) cancelSignal.addEventListener('abort', onCancel, { once: true });
+  return synth(text, ref, { signal: ctrl.signal }).finally(() => {
+    clearTimeout(timer);
+    if (cancelSignal) cancelSignal.removeEventListener('abort', onCancel);
+  });
 }
 
 // One line with stall detection + recovery: if it hangs, restart the engine and
 // retry; if it errors transiently, pause briefly and retry. Throws only after
 // LINE_MAX_ATTEMPTS so one bad line doesn't silently drop, but a hang never wedges
 // the whole job forever.
-async function synthLine(text, ref, lineNo) {
+async function synthLine(text, ref, lineNo, cancelSignal) {
   for (let attempt = 1; attempt <= LINE_MAX_ATTEMPTS; attempt++) {
+    if (cancelSignal?.aborted) throw new Error('Cancelled by user');
     try {
-      return await synthOnce(text, ref);
+      return await synthOnce(text, ref, cancelSignal);
     } catch (e) {
-      const stalled = e?.name === 'AbortError' || e?.code === 'ABORT_ERR' || /stall|timeout|abort/i.test(String(e?.message));
+      if (cancelSignal?.aborted) throw new Error('Cancelled by user');
+      const stalled = e?.name === 'AbortError' || e?.code === 'ABORT_ERR' || e?.cause?.name === 'AbortError' || e?.cause?.code === 'ABORT_ERR' || /stall|timeout|abort/i.test(String(e?.message)) || /fetch failed/i.test(String(e?.message)) || /out of memory/i.test(String(e?.message));
       console.log(`[chunk] line ${lineNo} attempt ${attempt}/${LINE_MAX_ATTEMPTS} failed${stalled ? ' (stall)' : ''}: ${e?.message || e}`);
       if (attempt === LINE_MAX_ATTEMPTS) throw new Error(`stalled/failed after ${attempt} attempts: ${e?.message || e}`);
       if (stalled) await restartTts();   // hung engine -> reset it, then retry the line
@@ -419,7 +519,7 @@ function splitText(text, max = MAX_PIECE_CHARS) {
 // resiliently (a hung engine is detected and auto-restarted, then retried). All
 // segments are stitched into a single file at the end — callers and the user only
 // ever see one episode, never the chunks/pieces. onProgress(done,total) fires per line.
-async function buildEpisode(lines, voiceA, voiceB, outPath, onProgress) {
+async function buildEpisode(lines, voiceA, voiceB, outPath, onProgress, cancelSignal) {
   const workDir = path.join(os.tmpdir(), 'podcast-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
   await mkdir(workDir, { recursive: true });
   try {
@@ -435,7 +535,8 @@ async function buildEpisode(lines, voiceA, voiceB, outPath, onProgress) {
         for (let k = 0; k < pieces.length; k++) {
           const label = pieces.length > 1 ? `${i + 1}.${k + 1}/${pieces.length}` : `${i + 1}`;
           let out;
-          try { out = await synthLine(pieces[k], ref, label); }
+          if (cancelSignal?.aborted) throw new Error('Cancelled by user');
+          try { out = await synthLine(pieces[k], ref, label, cancelSignal); }
           catch (err) { throw new Error(`Line ${i + 1}: ${err.message}`); }
           const p = path.join(workDir, `seg_${String(segs.length).padStart(4, '0')}.${out.ext}`);
           await writeFile(p, out.buffer);
@@ -462,6 +563,44 @@ app.get('/api/voices', async (req, res) => {
   const local = await localVoices();
   const clones = local.filter((v) => v.voice_id !== 'local:default');
   res.json({ voices: clones.length ? clones : local });
+});
+
+app.get('/api/voices/:id/audio', async (req, res) => {
+  try {
+    const regPath = path.join(__dirname, 'tts_local', 'voices', 'registry.json');
+    const reg = JSON.parse(await readFile(regPath, 'utf8'));
+    const meta = reg[req.params.id];
+    if (!meta) return res.status(404).json({ error: 'Voice not found' });
+    const filePath = path.join(__dirname, 'tts_local', 'voices', meta.file);
+    res.sendFile(filePath);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/voices/:id', async (req, res) => {
+  try {
+    const { name } = req.body || {};
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
+    const regPath = path.join(__dirname, 'tts_local', 'voices', 'registry.json');
+    const reg = JSON.parse(await readFile(regPath, 'utf8'));
+    if (!reg[req.params.id]) return res.status(404).json({ error: 'Voice not found' });
+    reg[req.params.id].name = name.trim().slice(0, 60);
+    await writeFile(regPath, JSON.stringify(reg, null, 2));
+    res.json({ ok: true, name: reg[req.params.id].name });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/voices/:id', async (req, res) => {
+  try {
+    const regPath = path.join(__dirname, 'tts_local', 'voices', 'registry.json');
+    const reg = JSON.parse(await readFile(regPath, 'utf8'));
+    const meta = reg[req.params.id];
+    if (!meta) return res.status(404).json({ error: 'Voice not found' });
+    const filePath = path.join(__dirname, 'tts_local', 'voices', meta.file);
+    await rm(filePath, { force: true });
+    delete reg[req.params.id];
+    await writeFile(regPath, JSON.stringify(reg, null, 2));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Clone defaults to the free local service. Pass provider=replicate to store a
@@ -587,6 +726,8 @@ app.post('/api/podcast', async (req, res) => {
 const jobs = new Map();        // jobId -> { id, audios:[audio], createdAt }
 const workQueue = [];          // audio objects waiting to be synthesized
 let workerBusy = false;
+let currentAudio = null;
+let currentAbortCtrl = null;
 
 // Permanent history. Every episode ever attempted is recorded here — including its
 // script lines + voices, so it can be re-generated later without retyping anything,
@@ -601,6 +742,21 @@ async function loadEpisodes() {
     episodes = Array.isArray(parsed) ? parsed : [];
   } catch { episodes = []; }
   episodesLoaded = true;
+  // Recover items that were in-flight when the server last stopped.
+  // 'running' → 'error' (synthesis was cut off mid-stream).
+  // 'queued'  → re-add to workQueue so they continue automatically.
+  let needsSave = false;
+  for (const e of episodes) {
+    if (e.status === 'running') {
+      // Re-queue to retry from the start — handles laptop sleep/wake and server restarts.
+      e.status = 'queued'; e.line = 0; e.error = null; needsSave = true;
+      workQueue.push(e);
+    } else if (e.status === 'queued') {
+      workQueue.push(e);
+    }
+  }
+  if (needsSave) await saveEpisodes();
+  if (workQueue.length) pumpWorker();
 }
 async function saveEpisodes() {
   await mkdir(OUTPUT_DIR, { recursive: true });
@@ -667,16 +823,32 @@ function pumpWorker() {
   (async () => {
     while (workQueue.length) {
       const audio = workQueue.shift();
+      if (audio.status === 'cancelled') continue;
       audio.status = 'running';
       await saveEpisodes();
+      const ctrl = new AbortController();
+      currentAudio = audio;
+      currentAbortCtrl = ctrl;
       try {
         const { file, full } = await uniqueOutPath(slugify(audio.name));
-        await buildEpisode(audio.lines, audio.voiceA, audio.voiceB, full, (done, total) => { audio.line = done; audio.total = total; });
+        await buildEpisode(audio.lines, audio.voiceA, audio.voiceB, full, (done, total) => { audio.line = done; audio.total = total; }, ctrl.signal);
         audio.file = file;
         audio.status = 'done';
       } catch (e) {
-        audio.status = 'error';
-        audio.error = String(e.message || e);
+        if (audio.cancelled) {
+          audio.status = 'cancelled';
+          audio.error = 'Cancelled';
+        } else {
+          // Never permanently fail — re-queue automatically after a short backoff.
+          console.log(`[worker] "${audio.name}" failed (${e.message || e}), re-queuing in 20s`);
+          audio.status = 'queued';
+          audio.line = 0;
+          audio.error = null;
+          setTimeout(() => { workQueue.push(audio); pumpWorker(); }, 20 * 1000);
+        }
+      } finally {
+        currentAudio = null;
+        currentAbortCtrl = null;
       }
       await saveEpisodes();
     }
@@ -748,6 +920,8 @@ app.get('/api/history', async (req, res) => {
       id: e.id, name: e.name, file: e.file, present, size,
       status: e.status, error: e.error, createdAt: e.createdAt,
       lines: Array.isArray(e.lines) ? e.lines.length : 0,
+      line: e.line || 0, total: e.total || 0,
+      queuePosition: workQueue.indexOf(e),
       regenerable: Array.isArray(e.lines) && e.lines.length > 0 && !!e.voiceA && !!e.voiceB,
     });
   }
@@ -778,8 +952,60 @@ app.post('/api/regenerate', async (req, res) => {
     await saveEpisodes();
     workQueue.push(item);
     pumpWorker();
-    res.json({ jobId: jid });
+    res.json({ jobId: jid, audios: [audioSummary(item)] });
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+
+app.post('/api/prioritize', async (req, res) => {
+  const { id, position = 0 } = req.body || {};
+  const idx = workQueue.findIndex((a) => a.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found in queue.' });
+  if (idx === position) return res.json({ ok: true });
+  const [item] = workQueue.splice(idx, 1);
+  workQueue.splice(Math.max(0, position), 0, item);
+  res.json({ ok: true });
+});
+
+app.patch('/api/episode/:id', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
+  await loadEpisodes();
+  const ep = episodes.find(e => e.id === req.params.id);
+  if (!ep) return res.status(404).json({ error: 'Episode not found' });
+  ep.name = name.trim().slice(0, 100);
+  await saveEpisodes();
+  res.json({ ok: true, name: ep.name });
+});
+
+app.post('/api/cancel', async (req, res) => {
+  const { id } = req.body || {};
+  // 1. Still waiting in the live queue
+  const qIdx = workQueue.findIndex((a) => a.id === id);
+  if (qIdx !== -1) {
+    const audio = workQueue[qIdx];
+    audio.cancelled = true;
+    audio.status = 'cancelled';
+    audio.error = 'Cancelled';
+    workQueue.splice(qIdx, 1);
+    saveEpisodes();
+    return res.json({ ok: true });
+  }
+  // 2. Currently being synthesized
+  if (currentAudio?.id === id && currentAbortCtrl) {
+    currentAudio.cancelled = true;
+    currentAbortCtrl.abort(new Error('Cancelled by user'));
+    return res.json({ ok: true });
+  }
+  // 3. Stuck as queued/running in the history DB (e.g. after a server restart)
+  await loadEpisodes();
+  const ep = episodes.find((e) => e.id === id);
+  if (ep && (ep.status === 'queued' || ep.status === 'running')) {
+    ep.status = 'cancelled';
+    ep.error = 'Cancelled';
+    await saveEpisodes();
+    return res.json({ ok: true });
+  }
+  res.status(404).json({ error: 'Not found or already done.' });
 });
 
 app.use('/output', express.static(OUTPUT_DIR));

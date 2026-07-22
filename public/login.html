@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in — Podcast Studio</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(1200px 600px at 20% -10%, #1e2440 0%, #0d1020 55%, #090b16 100%);
+    color: #e8eaf2; padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 380px; background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.09); border-radius: 16px;
+    padding: 36px 32px; backdrop-filter: blur(8px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  }
+  .logo { font-size: 40px; text-align: center; }
+  h1 { font-size: 22px; font-weight: 700; text-align: center; margin-top: 10px; }
+  .sub { color: #9aa1b5; font-size: 14px; text-align: center; margin: 6px 0 26px; }
+  #googleBtn { display: flex; justify-content: center; min-height: 0; }
+  .divider { display: flex; align-items: center; gap: 12px; color: #6a7188; font-size: 12px; margin: 20px 0; text-transform: uppercase; letter-spacing: .08em; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: rgba(255,255,255,0.1); }
+  label { display: block; font-size: 13px; color: #9aa1b5; margin-bottom: 6px; }
+  input[type=password] {
+    width: 100%; padding: 12px 14px; border-radius: 10px; font-size: 15px;
+    border: 1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.35); color: #e8eaf2;
+    outline: none;
+  }
+  input[type=password]:focus { border-color: #6a8dff; }
+  button.primary {
+    width: 100%; margin-top: 14px; padding: 12px; border: 0; border-radius: 10px;
+    background: linear-gradient(135deg, #5b7cfa, #7a5bfa); color: #fff;
+    font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button.primary:hover { filter: brightness(1.1); }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  .error { color: #ff8a8a; font-size: 13px; margin-top: 12px; text-align: center; min-height: 18px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="logo">🎙️</div>
+    <h1>Podcast Studio</h1>
+    <p class="sub">Sign in to continue</p>
+
+    <div id="googleWrap" class="hidden">
+      <div id="googleBtn"></div>
+      <div class="divider" id="orDivider">or</div>
+    </div>
+
+    <form id="pwForm" class="hidden">
+      <label for="pw">Password</label>
+      <input type="password" id="pw" autocomplete="current-password" autofocus />
+      <button class="primary" type="submit" id="pwBtn">Sign in</button>
+    </form>
+
+    <p class="error" id="err"></p>
+  </main>
+
+<script>
+  const err = (m) => { document.getElementById('err').textContent = m || ''; };
+
+  async function finishLogin(res) {
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { location.href = '/'; }
+    else { err(data.error || 'Sign-in failed.'); }
+  }
+
+  async function onGoogleCredential(response) {
+    err('');
+    const res = await fetch('/api/auth/google', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ credential: response.credential }),
+    });
+    finishLogin(res);
+  }
+
+  document.getElementById('pwForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    err('');
+    const btn = document.getElementById('pwBtn');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: document.getElementById('pw').value }),
+      });
+      await finishLogin(res);
+    } finally { btn.disabled = false; }
+  });
+
+  (async () => {
+    const cfg = await fetch('/api/auth/config').then((r) => r.json()).catch(() => ({}));
+    if (cfg.passwordEnabled) document.getElementById('pwForm').classList.remove('hidden');
+    if (cfg.googleClientId) {
+      const s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.onload = () => {
+        google.accounts.id.initialize({ client_id: cfg.googleClientId, callback: onGoogleCredential });
+        google.accounts.id.renderButton(document.getElementById('googleBtn'), { theme: 'filled_black', size: 'large', width: 316 });
+        document.getElementById('googleWrap').classList.remove('hidden');
+        if (!cfg.passwordEnabled) document.getElementById('orDivider').classList.add('hidden');
+      };
+      document.head.appendChild(s);
+    }
+  })();
+</script>
+</body>
+</html>

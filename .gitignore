@@ -33,3 +33,8 @@ voices_replicate/
 # ---- local tooling / OS cruft ----
 .claude/
 .DS_Store
+
+# ---- editor/backup/log droppings ----
+*.bak
+*.bak-*
+*.log

@@ -21,7 +21,12 @@
     color:var(--ink); font-family:"Spline Sans Mono", ui-monospace, monospace;
     min-height:100vh; line-height:1.5;
   }
-  .wrap{max-width:860px; margin:0 auto; padding:48px 24px 120px}
+  .wrap{max-width:1200px; margin:0 auto; padding:40px 24px 120px}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;margin-top:24px}
+  .two-col>.step{margin-top:0}
+  .now-hidden{grid-template-columns:1fr!important}
+  .now-hidden #nowPanel{display:none!important}
+  @media(max-width:700px){.two-col{grid-template-columns:1fr}}
   header h1{
     font-family:"Fraunces", Georgia, serif; font-weight:900; font-size:clamp(40px,7vw,76px);
     line-height:.95; margin:0; letter-spacing:-.02em;
@@ -76,6 +81,12 @@
   .vcard.sel{border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent)}
   .vcard .nm{font-size:14px; font-weight:600}
   .vcard .meta{font-size:11px; color:var(--muted); margin-top:3px; text-transform:capitalize}
+  .vplay{background:transparent;border:1px solid var(--line);color:var(--accent2);width:26px;height:26px;border-radius:6px;font-size:11px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1}
+  .vplay:hover{background:#2a1f12;border-color:var(--accent2)}
+  .vdel{background:transparent;border:1px solid var(--line);color:#a05050;width:26px;height:26px;border-radius:6px;font-size:13px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1}
+  .vdel:hover{background:#2a1212;border-color:#c06060;color:#e07070}
+  .vedit{background:transparent;border:1px solid var(--line);color:var(--muted);width:26px;height:26px;border-radius:6px;font-size:11px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1}
+  .vedit:hover{background:#1a1a0f;border-color:var(--accent2);color:var(--accent2)}
   .vcard audio{width:100%; margin-top:8px; height:30px}
   .assign{display:flex; gap:14px; margin-top:14px; flex-wrap:wrap}
   .assign > div{flex:1; min-width:200px}
@@ -88,6 +99,19 @@
   .player audio{width:100%}
   .spin{display:inline-block;width:13px;height:13px;border:2px solid #1a120a55;border-top-color:#1a120a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:7px}
   @keyframes s{to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .now-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.4s ease-in-out infinite;vertical-align:middle;margin-right:8px}
+  .sort-btn{background:transparent;border:1px solid var(--line);color:var(--muted);padding:5px 12px;border-radius:8px;font-family:inherit;font-size:12px;cursor:pointer}
+  .sort-btn.on{background:var(--accent);color:#1a120a;border-color:var(--accent);font-weight:600}
+  .view-btn{padding:5px 13px;border:none;font-family:inherit;font-size:12px;cursor:pointer;background:transparent;color:var(--muted)}
+  .view-btn.on{background:var(--accent);color:#1a120a;font-weight:600}
+  .play-btn{background:transparent;border:1px solid var(--line);color:var(--accent2);padding:4px 10px;border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer;flex-shrink:0}
+  .play-btn:hover{background:#2a1f12;border-color:var(--accent2)}
+  #miniPlayer{position:fixed;bottom:0;left:0;right:0;background:#1a1308ee;backdrop-filter:blur(12px);border-top:1px solid #3a2a18;padding:12px 20px;display:none;z-index:999;align-items:center;gap:14px}
+  #miniPlayer.show{display:flex}
+  #miniPlayer audio{flex:1;height:36px;min-width:0}
+  #miniPlayerName{font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;flex-shrink:0}
+  #miniPlayerClose{background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0 4px;flex-shrink:0;line-height:1}
   .hint{font-size:11px;color:var(--muted);margin-top:8px}
   a{color:var(--accent2)}
   .foot{color:var(--muted);font-size:12px;margin-top:40px;text-align:center}
@@ -100,7 +124,8 @@
     <p class="tag">Paste anything. Get a two-host conversation, spoken in real voices, stitched into one episode. Runs on your own ElevenLabs + LLM keys.</p>
   </header>
 
-  <!-- STEP 1: SOURCE + SETTINGS -->
+  <!-- STEPS 1 + 2: SOURCE and SCRIPT — side by side -->
+  <div class="two-col">
   <section class="step" id="s1">
     <h2><span class="n">1</span> Source &amp; settings</h2>
     <div class="tabs" id="modeTabs" style="margin-bottom:14px">
@@ -150,6 +175,7 @@
     <div class="lines" id="lines"></div>
     <button class="ghost" id="regenBtn" style="margin-top:14px">↺ Rewrite</button>
   </section>
+  </div><!-- end two-col steps 1+2 -->
 
   <!-- STEP 3: VOICES -->
   <section class="step dim" id="s3">
@@ -221,24 +247,69 @@
       <button class="cta" id="genAllBtn" style="margin-top:14px">Generate all ♫</button>
     </div>
 
-    <!-- live progress for the running job -->
-    <div id="jobBox" style="display:none;margin-top:18px"></div>
-
     <!-- inline player for a quick single listen -->
     <div class="player" id="player">
       <audio id="audio" controls></audio>
       <a id="dl" class="ghost" style="display:inline-block;margin-top:12px;text-decoration:none" download="podcast.mp3">↓ Download MP3</a>
     </div>
 
-    <!-- permanent history — every episode ever generated, read straight off disk -->
-    <div style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">
-      <label style="display:flex;align-items:center;gap:10px">History
-        <button class="ghost" id="reloadHistory" style="margin:0;padding:3px 10px;font-size:11px">↺</button>
-      </label>
-      <p class="hint" style="margin-top:0">Everything you've ever generated. Download any episode, or Regenerate one (re-runs its saved script + voices — failed ones too).</p>
-      <div id="history" style="font-size:13px;color:var(--muted)">—</div>
-    </div>
   </section>
+
+  <!-- BOTTOM TWO-COL: Now Generating (left) + Recent/History (right) -->
+  <div class="two-col" id="bottomCols">
+
+  <!-- LEFT: NOW GENERATING -->
+  <div id="nowPanel" style="display:none;border:1px solid #5a3a1a;border-radius:14px;padding:20px 22px;background:linear-gradient(160deg,#221a0f,#1a1308)">
+    <div style="display:flex;align-items:center;margin-bottom:14px">
+      <span class="now-dot"></span>
+      <span style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:600">Now Generating</span>
+    </div>
+    <div id="jobBox"></div>
+  </div>
+
+  <!-- RIGHT COLUMN: Recently Generated + History -->
+  <div id="rightCol">
+
+  <!-- RECENTLY GENERATED — completed episodes from the last 48h -->
+  <div id="recentPanel" style="display:none;border:1px solid #2d4a1e;border-radius:14px;padding:20px 22px;background:linear-gradient(160deg,#131a0f,#101408)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0"></span>
+        <span style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ok);font-weight:600">Recently Generated</span>
+      </div>
+      <span style="font-size:11px;color:var(--muted)">last 48 hours</span>
+    </div>
+    <div id="recentBox"></div>
+  </div>
+
+  <!-- HISTORY — always outside dimmed steps, always clickable -->
+  <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:16px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:12px;letter-spacing:.05em;color:var(--muted);text-transform:uppercase;margin-right:4px">History</span>
+      <button class="ghost" id="reloadHistory" style="margin:0;padding:4px 10px;font-size:12px">↺</button>
+      <div style="display:flex;gap:6px;margin-left:4px">
+        <button class="sort-btn on" id="sortDate">Most recent</button>
+        <button class="sort-btn" id="sortName">A – Z</button>
+        <button class="sort-btn" id="sortEps">Most episodes</button>
+      </div>
+      <div style="display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:auto">
+        <button class="view-btn on" id="viewGrouped">⊞ Grouped</button>
+        <button class="view-btn" id="viewList">≡ List</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <input type="text" id="histSearch" placeholder="Search episodes…" style="flex:1;min-width:180px;max-width:340px;padding:8px 12px;font-size:13px;background:#120f0b;border:1px solid var(--line);border-radius:8px;color:var(--ink);font-family:inherit" />
+      <div style="display:flex;gap:6px">
+        <button class="sort-btn on" id="filterAll">All</button>
+        <button class="sort-btn" id="filterCancelled">⊘ Cancelled</button>
+        <button class="sort-btn" id="filterFailed">✕ Failed</button>
+      </div>
+    </div>
+    <div id="history" style="font-size:13px;color:var(--muted)">—</div>
+  </div>
+
+  </div><!-- end rightCol -->
+  </div><!-- end bottomCols two-col -->
 
   <p class="foot">Local tool. Your keys, your credits, your files. Only clone voices you own or have consent to use.</p>
 </div>
@@ -311,7 +382,6 @@ async function writeScript(){
     const d=await r.json(); if(!r.ok) throw new Error(d.error);
     script=d; renderScript();
     show($('s2')); show($('s3')); show($('s4'));
-    if(voices.length===0) loadVoices();
   }catch(e){ msg($('m1'),(verbatim?'Parse':'Script')+' failed: '+e.message,'e'); }
   $('scriptBtn').disabled=false; $('scriptBtn').textContent=doneLabel;
 }
@@ -344,14 +414,57 @@ async function loadVoices(){
     $('cloneOpts').style.display = hasRep ? 'flex' : 'none';
   }catch(e){ msg($('m3'),'Could not load voices: '+e.message,'e'); }
 }
+let _previewAudio = null;
 function renderVoices(){
   const box=$('voices'); box.innerHTML='';
   voices.forEach(v=>{
     const c=document.createElement('div'); c.className='vcard'; c.dataset.id=v.voice_id;
-    c.innerHTML=`<div class="nm">${v.name}</div><div class="meta">${v.category||''} ${v.labels?.gender?'· '+v.labels.gender:''} ${v.labels?.accent?'· '+v.labels.accent:''}</div>`;
+    const isLocalClone = v.voice_id.startsWith('local:') && v.voice_id !== 'local:default';
+    const playBtn = isLocalClone ? `<button class="vplay" data-vid="${v.voice_id.slice(6)}" title="Preview voice">▶</button>` : '';
+    const editBtn = isLocalClone ? `<button class="vedit" data-vid="${v.voice_id.slice(6)}" title="Rename voice">✎</button>` : '';
+    const delBtn  = isLocalClone ? `<button class="vdel"  data-vid="${v.voice_id.slice(6)}" title="Delete voice">✕</button>` : '';
+    c.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><div class="nm" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.name}</div>${playBtn}${editBtn}${delBtn}</div><div class="meta">${v.category||''} ${v.labels?.gender?'· '+v.labels.gender:''} ${v.labels?.accent?'· '+v.labels.accent:''}</div>`;
     if(v.preview_url){ const a=document.createElement('audio'); a.controls=true; a.src=v.preview_url; c.append(a); }
-    c.onclick=(e)=>{ if(e.target.tagName==='AUDIO')return; selectedCard=v.voice_id;
-      [...box.children].forEach(x=>x.classList.toggle('sel', x.dataset.id===v.voice_id)); };
+    c.onclick=(e)=>{
+      if(e.target.tagName==='AUDIO') return;
+      if(e.target.classList.contains('vplay')){
+        const btn=e.target; const vid=btn.dataset.vid;
+        const allBtns=[...box.querySelectorAll('.vplay')];
+        if(_previewAudio){ _previewAudio.pause(); _previewAudio=null; allBtns.forEach(b=>b.textContent='▶'); if(btn.dataset.playing==='1'){btn.dataset.playing='0';return;} }
+        btn.dataset.playing='1'; btn.textContent='■';
+        _previewAudio=new Audio(`/api/voices/${vid}/audio`);
+        _previewAudio.play();
+        _previewAudio.onended=()=>{ btn.textContent='▶'; btn.dataset.playing='0'; _previewAudio=null; };
+        return;
+      }
+      if(e.target.classList.contains('vedit')){
+        const vid=e.target.dataset.vid;
+        const nm=c.querySelector('.nm');
+        const cur=nm.textContent;
+        const inp=document.createElement('input');
+        inp.value=cur; inp.style.cssText='width:100%;background:#1a1209;border:1px solid var(--accent2);border-radius:4px;color:var(--ink);padding:2px 6px;font-size:13px;font-weight:600;font-family:inherit';
+        nm.replaceWith(inp); inp.focus(); inp.select();
+        const save=()=>{
+          const newName=inp.value.trim()||cur;
+          fetch(`/api/voices/${vid}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({name:newName})})
+            .then(r=>r.json()).then(()=>loadVoices());
+        };
+        inp.onblur=save;
+        inp.onkeydown=e2=>{ if(e2.key==='Enter'){e2.preventDefault();inp.blur();} if(e2.key==='Escape'){inp.value=cur;inp.blur();} };
+        return;
+      }
+      if(e.target.classList.contains('vdel')){
+        const vid=e.target.dataset.vid; const vname=v.name;
+        if(!confirm(`Delete "${vname}"? This cannot be undone.`)) return;
+        if(_previewAudio){ _previewAudio.pause(); _previewAudio=null; }
+        fetch(`/api/voices/${vid}`,{method:'DELETE'}).then(r=>r.json()).then(d=>{
+          if(d.ok) loadVoices(); else alert('Could not delete: '+(d.error||'unknown error'));
+        });
+        return;
+      }
+      selectedCard=v.voice_id;
+      [...box.children].forEach(x=>x.classList.toggle('sel', x.dataset.id===v.voice_id));
+    };
     box.append(c);
   });
 }
@@ -385,10 +498,10 @@ $('cloneBtn').onclick=async()=>{
 // server-side queue that drains one episode at a time and auto-continues to the next,
 // so you can set them all up and walk away overnight.
 let batch = [];          // episodes staged in the UI, not yet submitted
-let activeJobs = [];     // submitted job ids, in order (a running session log)
-let polling = false;
-let pollWanted = false;  // set when a new job is submitted mid-poll, so the loop re-runs
-let lastDone = -1;
+let nowLoopRunning = false;
+let lastDoneCount = -1;
+let nowPollTimer = null;
+let histSearch = '';
 
 // Snapshot the current script + voices + name into a self-contained episode.
 function captureCurrent(){
@@ -426,53 +539,74 @@ $('genAllBtn').onclick=()=>{
   submitJob(audios);
 };
 
-// Submit a batch to the server queue. Never blocks — if something is already running,
-// these line up behind it and run automatically when it's their turn.
+// Submit a batch to the server queue. Never blocks.
 async function submitJob(audios){
   clearMsg($('m4')); $('player').classList.remove('show');
   try{
     const r=await fetch('/api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({audios})});
     const d=await r.json(); if(!r.ok) throw new Error(d.error);
-    activeJobs.push(d.jobId);
-    pollWanted=true;
+    // Pre-populate tracking so items appear in the panel immediately.
+    if(d.audios) d.audios.forEach(a=>trackedNowIds.add(a.id));
     msg($('m4'),'Queued '+audios.length+(audios.length>1?' episodes':' episode')+'. They generate one after another — keep adding more or leave it overnight; finished files land in output/.','i');
-    startPolling();
+    nowPollLoop();
+    waitForJob(d.jobId);
   }catch(e){ msg($('m4'),'Could not queue: '+e.message,'e'); }
 }
 
-// Fetch every submitted job once, render them as one combined list, and refresh
-// "Saved episodes" whenever one more has finished. Returns the flattened audios.
-async function pollOnce(){
-  const all=[]; let allDone=true;
-  for(const jid of activeJobs){
-    try{ const r=await fetch('/api/jobs/'+jid); const d=await r.json();
-      if(r.ok){ all.push(...d.audios); if(!d.done) allDone=false; } else allDone=false;
-    }catch(e){ allDone=false; }
+// Single unified loop: polls history every 2s, drives the Now Generating panel for
+// ALL jobs (current session + previous sessions / page reloads). Replaces the old
+// per-session activeJobs/startPolling approach that missed cross-session items.
+async function nowPollLoop(){
+  if(nowLoopRunning) return;
+  if(nowPollTimer){ clearTimeout(nowPollTimer); nowPollTimer=null; }
+  nowLoopRunning=true;
+  while(true){
+    try{
+      const r=await fetch('/api/history'); const d=await r.json(); if(!r.ok) break;
+      // Discover newly active items and add them to the tracked set.
+      d.history.filter(h=>h.status==='running'||h.status==='queued').forEach(h=>trackedNowIds.add(h.id));
+      // Done items completed cleanly — remove so they don't linger in the panel.
+      d.history.filter(h=>h.status==='done').forEach(h=>trackedNowIds.delete(h.id));
+      // Show tracked items (active + recently cancelled/failed, for Redo access).
+      // Sort: running first, then queued in actual queue order, then settled items.
+      const shown=d.history.filter(h=>trackedNowIds.has(h.id)).sort((a,b)=>{
+        const rank=s=>s==='running'?0:s==='queued'?1:2;
+        if(rank(a.status)!==rank(b.status)) return rank(a.status)-rank(b.status);
+        if(a.status==='queued'&&b.status==='queued') return (a.queuePosition??99)-(b.queuePosition??99);
+        return 0;
+      });
+      if(!shown.length){ $('nowPanel').style.display='none'; $('bottomCols').classList.add('now-hidden'); break; }
+      $('nowPanel').style.display='block'; $('bottomCols').classList.remove('now-hidden');
+      renderNowItems(shown);
+      // Refresh the history list whenever something finishes.
+      const doneCount=d.history.filter(h=>h.status==='done').length;
+      if(doneCount!==lastDoneCount){ lastDoneCount=doneCount; loadHistory(); }
+      // Stop looping when everything is settled; panel stays up for Redo buttons.
+      if(!shown.some(h=>h.status==='running'||h.status==='queued')) break;
+      await new Promise(resolve=>setTimeout(resolve,2000));
+    }catch(e){ break; }
   }
-  renderJob(all);
-  const doneCount=all.filter(a=>a.status==='done').length;
-  if(doneCount!==lastDone){ lastDone=doneCount; loadHistory(); }
-  return { all, allDone };
+  nowLoopRunning=false;
 }
 
-// One poll loop covers the whole session. The outer do/while re-runs if a job was
-// submitted during the final tick, so nothing slips through the gap before we stop.
-async function startPolling(){
-  if(polling) return;
-  polling=true; $('jobBox').style.display='block';
-  let res;
-  do{
-    pollWanted=false;
-    do{
-      res=await pollOnce();
-      if(!res.allDone) await new Promise(r=>setTimeout(r,1500));
-    } while(!res.allDone);
-  } while(pollWanted);
-  polling=false;
-  const ok=res.all.filter(a=>a.status==='done'), bad=res.all.filter(a=>a.status==='error');
-  msg($('m4'),'All done — '+ok.length+' generated'+(bad.length?', '+bad.length+' failed':'')+'. Saved in output/.', bad.length?'e':'i');
-  if(res.all.length===1 && ok.length===1){ const f='/output/'+encodeURIComponent(ok[0].file);
-    $('audio').src=f; $('dl').href=f; $('dl').setAttribute('download', ok[0].file); $('player').classList.add('show'); }
+// Watches a specific job until it finishes, then shows the completion message
+// and auto-plays the result if it was a single episode.
+async function waitForJob(jobId){
+  while(true){
+    await new Promise(r=>setTimeout(r,2000));
+    try{
+      const r=await fetch('/api/jobs/'+jobId); const d=await r.json(); if(!r.ok) return;
+      if(d.done){
+        const ok=d.audios.filter(a=>a.status==='done');
+        const bad=d.audios.filter(a=>a.status==='error'||a.status==='cancelled');
+        if(ok.length||bad.length)
+          msg($('m4'),'All done — '+ok.length+' generated'+(bad.length?', '+bad.length+' failed/cancelled':'')+'. Saved in output/.', bad.length&&!ok.length?'e':'i');
+        if(d.audios.length===1&&ok.length===1){ const f='/output/'+encodeURIComponent(ok[0].file);
+          $('audio').src=f; $('dl').href=f; $('dl').setAttribute('download',ok[0].file); $('player').classList.add('show'); }
+        loadHistory(); return;
+      }
+    }catch(e){ return; }
+  }
 }
 
 // A small "↺ Regenerate" button that re-runs an episode by its history id.
@@ -483,19 +617,135 @@ function regenButton(id, label){
   return b;
 }
 
+function cancelButton(id){
+  const b=document.createElement('button'); b.className='ghost'; b.textContent='✕ Cancel';
+  b.style.cssText='margin:0;padding:4px 10px;font-size:11px;color:var(--err);border-color:var(--err)';
+  b.onclick=async()=>{
+    b.disabled=true; b.textContent='Cancelling…';
+    try{ await fetch('/api/cancel',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})}); }
+    catch(e){ b.disabled=false; b.textContent='✕ Cancel'; }
+  };
+  return b;
+}
+
+const _ordinals=['First','Second','Third','Fourth','Fifth','Sixth','Seventh','Eighth','Ninth','Tenth'];
+function _ordinal(n){ return _ordinals[n]||('#'+(n+1)); }
+
+async function refreshNowPanel(){
+  try{
+    const r=await fetch('/api/history'); if(!r.ok) return;
+    const d=await r.json();
+    d.history.filter(h=>h.status==='running'||h.status==='queued').forEach(h=>trackedNowIds.add(h.id));
+    d.history.filter(h=>h.status==='done').forEach(h=>trackedNowIds.delete(h.id));
+    const shown=d.history.filter(h=>trackedNowIds.has(h.id)).sort((a,b)=>{
+      const rank=s=>s==='running'?0:s==='queued'?1:2;
+      if(rank(a.status)!==rank(b.status)) return rank(a.status)-rank(b.status);
+      if(a.status==='queued'&&b.status==='queued') return (a.queuePosition??99)-(b.queuePosition??99);
+      return 0;
+    });
+    if(shown.length){ $('nowPanel').style.display='block'; $('bottomCols').classList.remove('now-hidden'); renderNowItems(shown); }
+  }catch(e){}
+}
+
+function generateNextButton(id){
+  const b=document.createElement('button'); b.className='ghost'; b.textContent='Generate Next';
+  b.style.cssText='margin:0;padding:4px 10px;font-size:11px;color:var(--accent2);border-color:var(--accent2)';
+  b.onclick=async()=>{
+    b.disabled=true; b.textContent='Moving…';
+    try{
+      await fetch('/api/prioritize',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,position:0})});
+      await refreshNowPanel();
+    }catch(e){}
+    b.disabled=false; b.textContent='Generate Next';
+  };
+  return b;
+}
+
 function renderJob(audios){
   const box=$('jobBox'); box.innerHTML='<label>Progress</label>';
   audios.forEach(a=>{
-    const row=document.createElement('div'); row.className='line'; row.style.alignItems='center'; row.style.margin='6px 0';
-    const right=document.createElement('div'); right.style.cssText='font-size:13px;display:flex;align-items:center;gap:8px';
-    if(a.status==='queued') right.innerHTML='<span style="color:var(--muted)">queued…</span>';
-    else if(a.status==='running') right.innerHTML=`<span class="spin" style="border-color:#9c938455;border-top-color:var(--accent)"></span><span style="color:var(--accent2)">line ${a.line}/${a.total||'?'}</span>`;
-    else if(a.status==='done') right.innerHTML=`<a href="/output/${encodeURIComponent(a.file)}" download="${a.file}">↓ ${a.file}</a>`;
-    else if(a.status==='error'){ right.innerHTML=`<span style="color:var(--err)">failed: ${a.error||'error'}</span>`; if(a.id) right.append(regenButton(a.id)); }
-    const left=document.createElement('div'); left.style.cssText='flex:1;font-size:13px'; left.innerHTML=`<b>${a.name}</b>`;
-    row.append(left,right); box.append(row);
+    const row=document.createElement('div');
+    row.style.cssText='display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)';
+
+    const name=document.createElement('div');
+    name.style.cssText='font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    name.textContent=a.name;
+
+    const right=document.createElement('div');
+    right.style.cssText='display:flex;align-items:center;gap:8px;flex-shrink:0';
+
+    if(a.status==='queued'){
+      right.innerHTML='<span style="color:var(--muted);font-size:13px">queued…</span>';
+      if(a.id) right.append(cancelButton(a.id));
+    } else if(a.status==='running'){
+      right.innerHTML=`<span class="spin" style="border-color:#9c938455;border-top-color:var(--accent)"></span><span style="color:var(--accent2);font-size:13px">line ${a.line}/${a.total||'?'}</span>`;
+      if(a.id) right.append(cancelButton(a.id));
+    } else if(a.status==='done'){
+      if(a.file) right.append(playButton(a.file, a.name));
+      const dl=document.createElement('a'); dl.href='/output/'+encodeURIComponent(a.file);
+      dl.setAttribute('download',a.file); dl.textContent='↓ Download';
+      dl.style.cssText='font-size:12px;color:var(--accent2);text-decoration:none'; right.append(dl);
+    } else if(a.status==='cancelled'){
+      right.innerHTML='<span style="color:var(--muted);font-size:13px">cancelled</span>';
+      if(a.id) right.append(regenButton(a.id,'↺ Redo'));
+    } else if(a.status==='error'){
+      right.innerHTML=`<span style="color:var(--err);font-size:12px">failed</span>`;
+      if(a.id) right.append(regenButton(a.id,'↺ Retry'));
+    }
+
+    row.append(name,right); box.append(row);
   });
 }
+
+// IDs that have appeared in the Now Generating panel this session.
+// Keeps cancelled/failed items visible (with a Redo button) instead of vanishing.
+const trackedNowIds = new Set();
+
+// Render items into the Now Generating panel — handles all statuses.
+function renderNowItems(items){
+  const box=$('jobBox'); box.innerHTML='';
+  items.forEach(a=>{
+    const row=document.createElement('div');
+    row.style.cssText='padding:10px 0;border-bottom:1px solid #3a3020';
+    const name=document.createElement('div');
+    name.style.cssText='font-size:13px;font-weight:600;color:var(--ink);margin-bottom:6px;word-break:break-word';
+    name.textContent=a.name;
+    const right=document.createElement('div');
+    right.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+    if(a.status==='running'){
+      const spin=document.createElement('span'); spin.className='spin';
+      spin.style.cssText='border-color:#9c938455;border-top-color:var(--accent);width:14px;height:14px;flex-shrink:0';
+      const prog=document.createElement('span');
+      prog.style.cssText='color:var(--accent2);font-size:15px;font-weight:700;white-space:nowrap';
+      prog.textContent='line '+(a.line||0)+' / '+(a.total||'?');
+      right.append(spin,prog);
+      if(a.id) right.append(cancelButton(a.id));
+    } else if(a.status==='queued'){
+      const pos=(a.queuePosition??0)+1;
+      const q=document.createElement('span');
+      q.style.cssText='color:var(--muted);font-size:13px;white-space:nowrap';
+      q.textContent='#'+pos+' in queue';
+      right.append(q);
+      if(a.id){ if(pos>1) right.append(generateNextButton(a.id)); right.append(cancelButton(a.id)); }
+    } else if(a.status==='cancelled'){
+      const s=document.createElement('span');
+      s.style.cssText='color:var(--muted);font-size:13px;white-space:nowrap';
+      s.textContent='cancelled';
+      right.append(s);
+      if(a.id) right.append(regenButton(a.id,'↺ Redo'));
+    } else if(a.status==='error'){
+      const s=document.createElement('span');
+      s.style.cssText='color:var(--err);font-size:13px;white-space:nowrap';
+      s.textContent='failed';
+      right.append(s);
+      if(a.id) right.append(regenButton(a.id,'↺ Retry'));
+    }
+    row.append(name,right); box.append(row);
+  });
+}
+
+// On page load, start the unified loop to pick up any active jobs from any session.
+function checkActiveOnLoad(){ $('bottomCols').classList.add('now-hidden'); nowPollLoop(); }
 
 // Re-run a past or failed episode from its saved script + voices.
 async function regenerate(id, btn){
@@ -504,39 +754,249 @@ async function regenerate(id, btn){
   try{
     const r=await fetch('/api/regenerate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});
     const d=await r.json(); if(!r.ok) throw new Error(d.error);
-    activeJobs.push(d.jobId); pollWanted=true;
-    msg($('m4'),'Re-queued — it\'ll run after anything already in progress. Watch Progress above.','i');
-    startPolling();
+    if(d.audios) d.audios.forEach(a=>trackedNowIds.add(a.id));
+    msg($('m4'),"Re-queued — it'll run after anything already in progress.",'i');
+    nowPollLoop();
+    waitForJob(d.jobId);
   }catch(e){ msg($('m4'),'Regenerate failed: '+e.message,'e'); }
   if(btn){ btn.disabled=false; btn.textContent=t; }
 }
 
 function fmtDate(ms){ if(!ms) return ''; try{ return new Date(ms).toLocaleString(); }catch{ return ''; } }
+function startEpRename(el, h, wrap){
+  if(!h.id) return;
+  const cur=h.name||'';
+  const inp=document.createElement('input');
+  inp.value=cur; inp.style.cssText='background:#1a1209;border:1px solid var(--accent2);border-radius:4px;color:var(--ink);padding:2px 6px;font-size:13px;font-weight:600;font-family:inherit;width:260px';
+  if(wrap) wrap.replaceWith(inp); else el.replaceWith(inp);
+  inp.focus(); inp.select();
+  const save=()=>{
+    const newName=inp.value.trim()||cur;
+    h.name=newName;
+    fetch(`/api/episode/${h.id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({name:newName})})
+      .then(()=>loadHistory());
+  };
+  inp.onblur=save;
+  inp.onkeydown=e2=>{ if(e2.key==='Enter'){e2.preventDefault();inp.blur();} if(e2.key==='Escape'){inp.value=cur;inp.blur();} };
+}
 
-// Permanent history, read from disk — nothing here disappears between runs/reloads.
+function updateRecentPanel(history){
+  const cutoff=Date.now()-48*3600*1000;
+  const recent=history.filter(h=>h.status==='done'&&h.present&&(h.createdAt||0)>=cutoff);
+  const panel=$('recentPanel');
+  if(!recent.length){ panel.style.display='none'; return; }
+  panel.style.display='block';
+  const box=$('recentBox'); box.innerHTML='';
+  recent.forEach(h=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #243318';
+    const left=document.createElement('div');
+    const sz=h.size?' · '+(h.size/1048576).toFixed(1)+' MB':'';
+    const nameWrap=document.createElement('div'); nameWrap.style.cssText='display:flex;align-items:center;gap:6px';
+    const nameEl=document.createElement('div'); nameEl.style.cssText='font-size:13px;font-weight:600;color:var(--ink)';
+    nameEl.textContent=h.name;
+    const renBtn=document.createElement('button'); renBtn.textContent='✎'; renBtn.title='Rename';
+    renBtn.style.cssText='background:transparent;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:0 2px;opacity:0;transition:opacity .15s';
+    renBtn.onclick=()=>startEpRename(nameEl,h,nameWrap);
+    nameWrap.onmouseenter=()=>renBtn.style.opacity='1'; nameWrap.onmouseleave=()=>renBtn.style.opacity='0';
+    nameWrap.append(nameEl,renBtn);
+    const metaEl=document.createElement('div'); metaEl.style.cssText='font-size:11px;color:var(--muted);margin-top:2px';
+    metaEl.textContent=fmtDate(h.createdAt)+sz;
+    left.append(nameWrap,metaEl);
+    const right=document.createElement('div');
+    right.style.cssText='display:flex;align-items:center;gap:8px;flex-shrink:0';
+    if(h.file){
+      right.append(playButton(h.file, h.name));
+      const a=document.createElement('a'); a.href='/output/'+encodeURIComponent(h.file);
+      a.setAttribute('download',h.file); a.textContent='↓ Download';
+      a.style.cssText='font-size:12px;color:var(--accent2);text-decoration:none'; right.append(a);
+    }
+    if(h.regenerable&&h.id) right.append(regenButton(h.id));
+    row.append(left,right); box.append(row);
+  });
+}
+
+// Derive series name by stripping episode identifiers from either end.
+// Handles leading:  "s1e3 stolen focus" → "stolen focus"
+//                   "trailer stolen focus" → "stolen focus"
+// Handles trailing: "wuthering s1e2" → "wuthering"
+//                   "essay 3" → "essay"
+function seriesOf(name){
+  return name.trim()
+    .replace(/^s\d+e\d*\s+/i, '')                        // leading "s1e3 " or "s2e "
+    .replace(/^(trailer|preview|pilot|ep\.?\s*\d*)\s+/i, '') // leading "trailer ", "ep2 "
+    .replace(/\s+s\d+e\d*\s*$/i, '')                     // trailing " s1e2"
+    .replace(/\s+\d+\s*$/, '')                           // trailing numbers
+    .trim() || name.trim();
+}
+
+// Sort + view + filter state
+let histSort='date', histView='grouped', histFilter='all';
+
+function setSortBtn(id){
+  ['sortDate','sortName','sortEps'].forEach(b=>{ const el=$(b); if(el) el.className='sort-btn'+(b===id?' on':''); });
+}
+function setViewBtn(id){
+  ['viewGrouped','viewList'].forEach(b=>{ const el=$(b); if(el) el.className='view-btn'+(b===id?' on':''); });
+}
+function setFilterBtn(id){
+  ['filterAll','filterCancelled','filterFailed'].forEach(b=>{ const el=$(b); if(el) el.className='sort-btn'+(b===id?' on':''); });
+}
+$('sortDate').onclick=()=>{ histSort='date'; setSortBtn('sortDate'); loadHistory(); };
+$('sortName').onclick=()=>{ histSort='name'; setSortBtn('sortName'); loadHistory(); };
+$('sortEps').onclick=()=>{ histSort='eps';  setSortBtn('sortEps');  loadHistory(); };
+$('viewGrouped').onclick=()=>{ histView='grouped'; setViewBtn('viewGrouped'); loadHistory(); };
+$('viewList').onclick=()=>{ histView='list'; setViewBtn('viewList'); loadHistory(); };
+$('filterAll').onclick=()=>{ histFilter='all'; setFilterBtn('filterAll'); loadHistory(); };
+$('filterCancelled').onclick=()=>{ histFilter='cancelled'; setFilterBtn('filterCancelled'); loadHistory(); };
+$('filterFailed').onclick=()=>{ histFilter='failed'; setFilterBtn('filterFailed'); loadHistory(); };
+
+function historyRow(h){
+  const row=document.createElement('div');
+  row.style.cssText='display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:10px 16px;border-top:1px solid #2a2218';
+  const left=document.createElement('div');
+  let badge='';
+  if(h.status==='error') badge=`<span style="color:var(--err);font-size:11px"> · failed</span>`;
+  else if(h.status==='cancelled') badge=`<span style="color:var(--muted);font-size:11px"> · cancelled</span>`;
+  else if(h.status==='running') badge=`<span style="color:var(--accent2);font-size:11px"> · generating…</span>`;
+  else if(h.status==='queued') badge=`<span style="color:var(--accent2);font-size:11px"> · queued</span>`;
+  else if(!h.present) badge=`<span style="color:var(--muted);font-size:11px"> · file removed</span>`;
+  const sz=h.size!=null?' · '+(h.size/1048576).toFixed(1)+' MB':'';
+  const nameWrap2=document.createElement('div'); nameWrap2.style.cssText='display:flex;align-items:center;gap:6px';
+  const nameEl2=document.createElement('div'); nameEl2.style.cssText='font-size:13px;color:var(--ink);font-weight:500';
+  nameEl2.textContent=h.name;
+  const renBtn2=document.createElement('button'); renBtn2.textContent='✎'; renBtn2.title='Rename';
+  renBtn2.style.cssText='background:transparent;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:0 2px;opacity:0;transition:opacity .15s';
+  renBtn2.onclick=()=>startEpRename(nameEl2,h,nameWrap2);
+  nameWrap2.onmouseenter=()=>renBtn2.style.opacity='1'; nameWrap2.onmouseleave=()=>renBtn2.style.opacity='0';
+  nameWrap2.append(nameEl2,renBtn2);
+  const metaEl2=document.createElement('div'); metaEl2.style.cssText='font-size:11px;color:var(--muted);margin-top:2px';
+  metaEl2.innerHTML=fmtDate(h.createdAt)+sz+badge;
+  left.append(nameWrap2,metaEl2);
+  const right=document.createElement('div');
+  right.style.cssText='display:flex;align-items:center;gap:8px;flex-shrink:0';
+  if(h.present&&h.file){
+    right.append(playButton(h.file, h.name));
+    const a=document.createElement('a'); a.href='/output/'+encodeURIComponent(h.file);
+    a.setAttribute('download',h.file); a.textContent='↓ Download';
+    a.style.cssText='font-size:12px;color:var(--accent2);text-decoration:none'; right.append(a);
+  }
+  if(h.regenerable&&h.id) right.append(regenButton(h.id));
+  row.append(left,right); return row;
+}
+
 async function loadHistory(){
   try{
     const r=await fetch('/api/history'); const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    updateRecentPanel(d.history);
     const box=$('history'); box.innerHTML='';
-    if(!d.history.length){ box.textContent='Nothing yet — generate an episode above.'; return; }
-    d.history.forEach(h=>{
-      const row=document.createElement('div'); row.style.cssText='display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)';
-      const left=document.createElement('div'); left.style.flex='1';
-      let badge='';
-      if(h.status==='error') badge=` <span style="color:var(--err)">· failed</span>`;
-      else if(h.status==='running'||h.status==='queued') badge=` <span style="color:var(--accent2)">· ${h.status}…</span>`;
-      else if(!h.present) badge=` <span style="color:var(--muted)">· file removed</span>`;
-      const sz = h.size!=null ? ' · '+(h.size/1048576).toFixed(1)+' MB' : '';
-      left.innerHTML=`<b>${h.name}</b>${badge}<br><span style="color:var(--muted);font-size:11px">${fmtDate(h.createdAt)}${sz}</span>`;
-      const right=document.createElement('div'); right.style.cssText='display:flex;align-items:center;gap:8px';
-      if(h.present && h.file){ const a=document.createElement('a'); a.href='/output/'+encodeURIComponent(h.file); a.setAttribute('download',h.file); a.textContent='↓ Download'; right.append(a); }
-      if(h.regenerable && h.id) right.append(regenButton(h.id));
-      row.append(left,right); box.append(row);
-    });
+    const q=histSearch.toLowerCase().trim();
+    let items=q ? d.history.filter(h=>(h.name||'').toLowerCase().includes(q)) : d.history;
+    if(histFilter==='cancelled') items=items.filter(h=>h.status==='cancelled');
+    else if(histFilter==='failed') items=items.filter(h=>h.status==='error');
+    const emptyMsg = histFilter==='cancelled' ? 'No cancelled episodes.' : histFilter==='failed' ? 'No failed episodes.' : q ? 'No episodes match "'+q+'"' : 'Nothing yet — generate an episode above.';
+    if(!items.length){ box.textContent=emptyMsg; return; }
+
+    if(histView==='list'){
+      // ---- FLAT LIST ----
+      if(histSort==='name') items.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+      else if(histSort==='eps') items.sort((a,b)=>(b.size||0)-(a.size||0));
+      else items.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+      const wrap=document.createElement('div');
+      wrap.style.cssText='border:1px solid #3a3020;border-radius:12px;overflow:hidden;margin-top:10px';
+      items.forEach(h=>wrap.append(historyRow(h)));
+      box.append(wrap);
+
+    } else {
+      // ---- GROUPED BY SERIES ----
+      const groups={};
+      items.forEach(h=>{
+        const key=seriesOf(h.name||'Unnamed');
+        if(!groups[key]) groups[key]=[];
+        groups[key].push(h);
+      });
+      // Sort within groups newest-first
+      Object.values(groups).forEach(g=>g.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)));
+
+      let seriesNames=Object.keys(groups);
+      if(histSort==='name') seriesNames.sort((a,b)=>a.localeCompare(b));
+      else if(histSort==='eps') seriesNames.sort((a,b)=>groups[b].length-groups[a].length);
+      else seriesNames.sort((a,b)=>(groups[b][0]?.createdAt||0)-(groups[a][0]?.createdAt||0));
+
+      seriesNames.forEach(series=>{
+        const entries=groups[series];
+        const fileCount=entries.filter(e=>e.present).length;
+        const epCount=new Set(entries.map(e=>e.name)).size;
+        const hasActive=entries.some(e=>e.status==='running'||e.status==='queued');
+
+        const wrap=document.createElement('div');
+        wrap.style.cssText='border:1px solid #3a3020;border-radius:12px;margin-top:12px;overflow:hidden';
+
+        const hdr=document.createElement('div');
+        hdr.style.cssText='padding:13px 16px;background:#26201a;display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;border-left:3px solid var(--accent)';
+        const hName=document.createElement('span');
+        hName.style.cssText='flex:1;font-weight:700;font-size:14px;color:var(--ink)';
+        hName.textContent=series;
+        const hMeta=document.createElement('span');
+        hMeta.style.cssText='font-size:11px;color:'+(hasActive?'var(--accent2)':'var(--muted)');
+        hMeta.textContent=(hasActive?'● ':'')+fileCount+' MP3'+(fileCount!==1?'s':'')+' · '+epCount+' ep'+(epCount!==1?'s':'');
+        const chev=document.createElement('span');
+        chev.style.cssText='color:var(--muted);font-size:13px;margin-left:4px';
+        chev.textContent='▸';
+        hdr.append(hName,hMeta,chev);
+
+        const body=document.createElement('div');
+        body.style.display='none';
+        entries.forEach(h=>body.append(historyRow(h)));
+
+        let open=false;
+        hdr.onclick=()=>{ open=!open; body.style.display=open?'':'none'; chev.textContent=open?'▾':'▸'; };
+
+        wrap.append(hdr,body); box.append(wrap);
+      });
+    }
   }catch(e){ $('history').textContent='Could not load history: '+e.message; }
 }
 $('reloadHistory').onclick=loadHistory;
+$('histSearch').addEventListener('input', e=>{ histSearch=e.target.value; loadHistory(); });
 loadHistory();
+checkActiveOnLoad();
+// Unlock all sections and load voices immediately — no script required
+show($('s2')); show($('s3')); show($('s4'));
+loadVoices();
+
+// --- mini player ---
+function playEpisode(file, name){
+  const mp=$('miniPlayer');
+  const au=$('miniAudio');
+  $('miniPlayerName').textContent=name;
+  au.src='/output/'+encodeURIComponent(file);
+  mp.classList.add('show');
+  au.play();
+  document.body.style.paddingBottom='70px';
+}
+$('miniPlayerClose').onclick=()=>{
+  $('miniAudio').pause();
+  $('miniPlayer').classList.remove('show');
+  document.body.style.paddingBottom='';
+};
+$('miniAudio').onended=()=>{
+  $('miniPlayer').classList.remove('show');
+  document.body.style.paddingBottom='';
+};
+
+function playButton(file, name){
+  const btn=document.createElement('button');
+  btn.className='play-btn'; btn.textContent='▶ Play';
+  btn.onclick=()=>playEpisode(file,name);
+  return btn;
+}
 </script>
+
+<div id="miniPlayer">
+  <button id="miniPlayerClose">✕</button>
+  <span id="miniPlayerName"></span>
+  <audio id="miniAudio" controls></audio>
+</div>
 </body>
 </html>
